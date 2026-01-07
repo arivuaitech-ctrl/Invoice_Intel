@@ -1,8 +1,17 @@
 import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
+// Add explicit Buffer import to fix "Cannot find name 'Buffer'"
+import { Buffer } from 'buffer';
+
+// Vercel config to disable the default body parser for this route
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-  apiVersion: '2023-10-16' as any, // Use a standard stable version for better build compatibility
+  apiVersion: '2023-10-16' as any,
 });
 
 const supabase = createClient(
@@ -10,17 +19,32 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 );
 
+// Helper function to get the raw body - renamed from 'buffer' to 'readRawBody' to avoid name collision with Buffer class
+async function readRawBody(readable: any) {
+  const chunks = [];
+  for await (const chunk of readable) {
+    // Fixed: Using Buffer from the imported module to avoid shadowing issues
+    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+  }
+  // Fixed: Using Buffer from the imported module to avoid shadowing issues
+  return Buffer.concat(chunks);
+}
+
 export default async function handler(req: any, res: any) {
+  if (req.method !== 'POST') {
+    return res.status(405).send('Method Not Allowed');
+  }
+
   const sig = req.headers['stripe-signature'];
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
   let event;
 
   try {
-    // Note: For a real production webhook, you need the raw body.
-    // This simplified version assumes the body is already parsed for the demo.
+    // Fixed: Using the renamed helper function readRawBody
+    const rawBody = await readRawBody(req);
     event = stripe.webhooks.constructEvent(
-      typeof req.body === 'string' ? req.body : JSON.stringify(req.body),
+      rawBody,
       sig,
       webhookSecret || ''
     );
