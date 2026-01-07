@@ -1,11 +1,28 @@
-<div align="center">
+# InvoiceIntel - AI Expense Tracker
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Smart expense tracking for professionals. Uses Google Gemini AI to extract data from invoices and receipts.
 
-  <h1>Built with AI Studio</h2>
+## Getting Started
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+1.  **Install Dependencies:**
+    ```bash
+    npm install
+    ```
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+2.  **Set Environment Variables:**
+    Create a `.env` file in the root and add:
+    ```env
+    API_KEY=your_gemini_api_key
+    SUPABASE_URL=your_supabase_url
+    SUPABASE_ANON_KEY=your_supabase_anon_key
+    STRIPE_SECRET_KEY=your_stripe_secret_key
+    ```
 
-</div>
+3.  **Run Locally:**
+    ```bash
+    npm run dev
+    ```
+
+## Deployment
+
+This app is optimized for deployment on **Vercel**. Simply connect your GitHub repository to Vercel and it will handle the API routes automatically.
