@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { 
@@ -26,14 +27,10 @@ const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'
 
 type ViewType = 'expenses' | 'analytics';
 
-// Utility to clean up AI dates
 const formatDate = (rawDate: string) => {
   if (!rawDate) return new Date().toISOString().split('T')[0];
-  // Basic check for YYYY-MM-DD
   const regex = /^\d{4}-\d{2}-\d{2}$/;
   if (regex.test(rawDate)) return rawDate;
-  
-  // Try to parse if it's different
   const d = new Date(rawDate);
   if (!isNaN(d.getTime())) {
     return d.toISOString().split('T')[0];
@@ -54,17 +51,13 @@ export default function App() {
   const [view, setView] = useState<ViewType>('expenses');
   const [progressStatus, setProgressStatus] = useState<string>('');
   
-  // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
   const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ExpenseItem | undefined>(undefined);
 
-  // Initialize Auth & Data
   useEffect(() => {
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log("Auth event:", event);
       if (session?.user) {
         try {
           const profile = await userService.upsertProfile(session.user);
@@ -72,11 +65,10 @@ export default function App() {
           const data = await db.getAll(session.user.id);
           setExpenses(data);
         } catch (err: any) {
-          console.error("Profile Error:", err);
+          console.error("Auth Change Error:", err);
           setUser(null);
         }
       } else {
-        // Clear everything on sign out
         setUser(null);
         setExpenses([]);
         setView('expenses');
@@ -98,22 +90,14 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      // 1. Trigger Supabase sign out
-      await userService.logout();
-      
-      // 2. Immediately reset local React state
-      // (This ensures UI flips even before the listener triggers)
+      // Clear UI state immediately
       setUser(null);
       setExpenses([]);
-      setLoading(false);
       setView('expenses');
-      
-      console.log("Logout successful");
+      // Then inform Supabase
+      await userService.logout();
     } catch (err) {
       console.error("Logout error:", err);
-      // Fallback: Just clear local state so the user isn't stuck
-      setUser(null);
-      setExpenses([]);
     }
   };
 
@@ -137,7 +121,7 @@ export default function App() {
       
       if (currentTotal + amount > limit) {
         setTimeout(() => {
-             alert(`⚠️ Warning: Spending on ${category} (RM ${(currentTotal + amount).toFixed(2)}) exceeds limit of RM ${limit}.`);
+             alert(`⚠️ Warning: Spending on ${category} exceeds limit of RM ${limit}.`);
         }, 500);
       }
     }
@@ -145,7 +129,6 @@ export default function App() {
 
   const handleFilesSelect = async (files: File[]) => {
     if (!user) return;
-
     const status = userService.canUpload(user, files.length);
     if (!status.allowed) {
         setIsPricingModalOpen(true);
@@ -158,7 +141,6 @@ export default function App() {
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
         setProgressStatus(`Processing ${i + 1} of ${files.length}: ${file.name}`);
-        
         try {
             const data = await extractInvoiceData(file);
             const newExpense: ExpenseItem = {
@@ -172,7 +154,6 @@ export default function App() {
                 createdAt: Date.now(),
                 fileName: file.name,
             };
-
             await db.add(newExpense, user.id);
             checkBudgetWarning(newExpense.category, newExpense.amount);
             successCount++;
@@ -186,26 +167,36 @@ export default function App() {
         setUser(updatedUser);
         await refreshExpenses();
     }
-
     setIsProcessing(false);
     setProgressStatus('');
   };
 
   const handleSaveExpense = async (item: ExpenseItem) => {
     if (!user) return;
+    
+    // Optimistic Update: Update UI before waiting for DB
+    const oldExpenses = [...expenses];
+    const cleanedItem = { ...item, date: formatDate(item.date) };
+    
+    if (expenses.some(e => e.id === item.id)) {
+      setExpenses(prev => prev.map(e => e.id === item.id ? cleanedItem : e));
+    } else {
+      setExpenses(prev => [cleanedItem, ...prev]);
+    }
+
     try {
-        const cleanedItem = { ...item, date: formatDate(item.date) };
-        
-        if (expenses.some(e => e.id === item.id)) {
-          await db.update(cleanedItem);
+        if (oldExpenses.some(e => e.id === item.id)) {
+          await db.update(cleanedItem, user.id);
         } else {
           await db.add(cleanedItem, user.id);
           checkBudgetWarning(item.category, item.amount);
         }
+        // Final sync just in case
         await refreshExpenses();
     } catch (e: any) {
       console.error("Save failed:", e);
-      alert("Failed to save changes. Please try again.");
+      setExpenses(oldExpenses); // Rollback on failure
+      alert("Failed to save. If you're on Supabase, ensure RLS policies are active.");
     }
   };
 
@@ -215,9 +206,19 @@ export default function App() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!user) return;
     if (window.confirm("Are you sure you want to delete this expense?")) {
-      await db.delete(id);
-      await refreshExpenses();
+      // Optimistic Delete
+      const oldExpenses = [...expenses];
+      setExpenses(prev => prev.filter(e => e.id !== id));
+
+      try {
+        await db.delete(id, user.id);
+      } catch (err) {
+        console.error("Delete failed:", err);
+        setExpenses(oldExpenses); // Rollback
+        alert("Could not delete item. You might not have permission (Check RLS Policies).");
+      }
     }
   };
 
@@ -397,13 +398,6 @@ export default function App() {
                             </td>
                         </tr>
                         ))}
-                        {filteredExpenses.length === 0 && (
-                          <tr>
-                            <td colSpan={5} className="px-6 py-12 text-center text-slate-500 text-sm italic">
-                              No records found matching your search.
-                            </td>
-                          </tr>
-                        )}
                     </tbody>
                     </table>
                 </div>

@@ -1,3 +1,4 @@
+
 import { ExpenseItem, BudgetMap, ExpenseCategory } from '../types';
 import { supabase } from './supabaseClient';
 
@@ -15,7 +16,6 @@ const mapToDb = (item: ExpenseItem, userId?: string) => {
     created_at: item.createdAt
   };
   
-  // Only include user_id on creation (insert), never on update
   if (userId) {
     data.user_id = userId;
   }
@@ -62,15 +62,18 @@ export const db = {
     }
   },
 
-  update: async (updatedItem: ExpenseItem): Promise<void> => {
-    // Exclude protected fields by just mapping basic item data
+  update: async (updatedItem: ExpenseItem, userId: string): Promise<void> => {
+    // Standard practice: don't send PK or system fields in the 'set' part of the update
     const payload = mapToDb(updatedItem);
-    delete payload.user_id; // Absolute safety check
+    delete payload.id; 
+    delete payload.user_id;
+    delete payload.created_at; 
     
     const { error } = await supabase
       .from('expenses')
       .update(payload)
-      .eq('id', updatedItem.id);
+      .eq('id', updatedItem.id)
+      .eq('user_id', userId); // Critical for RLS compliance
 
     if (error) {
       console.error("Error updating expense:", error);
@@ -78,13 +81,17 @@ export const db = {
     }
   },
 
-  delete: async (id: string): Promise<void> => {
+  delete: async (id: string, userId: string): Promise<void> => {
     const { error } = await supabase
       .from('expenses')
       .delete()
-      .eq('id', id);
+      .eq('id', id)
+      .eq('user_id', userId); // Critical for RLS compliance
 
-    if (error) throw error;
+    if (error) {
+      console.error("Error deleting expense:", error);
+      throw error;
+    }
   },
 
   clearAll: async (userId: string): Promise<void> => {

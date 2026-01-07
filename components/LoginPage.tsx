@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { CheckCircle, ShieldCheck, Zap, AlertCircle, Mail, ArrowRight, ChevronLeft, KeyRound, RefreshCw } from 'lucide-react';
 import { userService } from '../services/userService';
@@ -58,18 +59,23 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
 
   const handleSendOtp = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!email || resendTimer > 0) return;
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+        setError("Please enter your email address first.");
+        return;
+    }
+    if (resendTimer > 0) return;
     
     setIsLoading(true);
     setError(null);
     try {
-      await userService.loginWithEmail(email);
+      await userService.loginWithEmail(cleanEmail);
       setStep('otp');
       startResendTimer();
     } catch (err: any) {
       console.error("OTP send failed:", err);
-      if (err.message?.includes('rate limit')) {
-        setError("Too many attempts. Please wait a minute before trying again.");
+      if (err.message?.toLowerCase().includes('rate limit')) {
+        setError("Too many requests. Please wait a minute before trying again.");
       } else {
         setError(err.message || "Failed to send code. Please check your email and try again.");
       }
@@ -85,7 +91,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
     setIsLoading(true);
     setError(null);
     try {
-      await userService.verifyOtp(email, otp);
+      await userService.verifyOtp(email.trim(), otp);
       // Auth state change in App.tsx will pick this up
     } catch (err: any) {
       console.error("OTP verification failed:", err);
@@ -176,9 +182,6 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                         </>
                       )}
                     </button>
-                    <p className="text-center text-xs text-slate-400 px-4 leading-relaxed">
-                      By signing in, you agree to our Terms of Service and Privacy Policy.
-                    </p>
                   </form>
                 ) : (
                   <div className="space-y-4 animate-fadeIn">
@@ -203,9 +206,6 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                         </>
                       )}
                     </button>
-                    <p className="text-center text-xs text-slate-400 mt-4 leading-relaxed">
-                      Google OAuth requires authorized domains to be configured in your Cloud Console.
-                    </p>
                   </div>
                 )}
               </div>
@@ -224,7 +224,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                   </div>
                   <h3 className="text-2xl font-extrabold text-slate-900">Verify your Email</h3>
                   <p className="text-slate-500 text-sm mt-2 max-w-[240px] mx-auto">
-                    Enter the 6-digit code sent to <span className="text-slate-900 font-bold underline decoration-indigo-200">{email}</span>
+                    Enter the code sent to <span className="text-slate-900 font-bold underline decoration-indigo-200">{email}</span>
                   </p>
                 </div>
 
@@ -247,41 +247,21 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                     disabled={isLoading || otp.length < 6}
                     className="w-full flex justify-center items-center gap-3 px-6 py-4 bg-indigo-600 text-white text-base font-bold rounded-xl hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all active:scale-95 disabled:opacity-50 shadow-lg shadow-indigo-100"
                   >
-                    {isLoading ? (
-                      <RefreshCw className="w-5 h-5 animate-spin" />
-                    ) : (
-                      "Sign In"
-                    )}
+                    {isLoading ? <RefreshCw className="w-5 h-5 animate-spin" /> : "Sign In"}
                   </button>
                   
-                  <div className="text-center space-y-4">
+                  <div className="text-center">
                     <p className="text-xs text-slate-500">
                       Didn't get a code? {resendTimer > 0 ? (
                         <span className="font-bold text-slate-400">Resend in {resendTimer}s</span>
                       ) : (
-                        <button type="button" onClick={() => handleSendOtp()} className="text-indigo-600 hover:underline font-bold transition-all">Resend Code</button>
+                        <button type="button" onClick={() => handleSendOtp()} className="text-indigo-600 hover:underline font-bold">Resend Code</button>
                       )}
                     </p>
-                    <div className="bg-slate-50 p-4 rounded-xl border border-dashed border-slate-200">
-                      <p className="text-[10px] text-slate-400 font-medium">
-                        💡 <strong>Check your Spam or Junk folder</strong> if the code doesn't arrive in 1 minute. Ensure you've enabled the "OTP" template in Supabase.
-                      </p>
-                    </div>
                   </div>
                 </form>
               </div>
             )}
-
-            <div className="mt-auto pt-10 grid grid-cols-1 gap-4">
-              <div className="flex items-center gap-3 text-xs text-slate-500 font-medium bg-slate-50/50 p-2 rounded-lg">
-                <CheckCircle className="w-4 h-4 text-emerald-500" />
-                <span>10 Invoices Free Trial</span>
-              </div>
-              <div className="flex items-center gap-3 text-xs text-slate-500 font-medium bg-slate-50/50 p-2 rounded-lg">
-                <ShieldCheck className="w-4 h-4 text-indigo-500" />
-                <span>Encrypted Data Storage</span>
-              </div>
-            </div>
           </div>
         </div>
       </div>
