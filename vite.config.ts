@@ -4,17 +4,25 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   define: {
-    // Safely polyfill process.env for the browser bundle
-    'process.env': {
-      API_KEY: JSON.stringify(process.env.API_KEY),
-      SUPABASE_URL: JSON.stringify(process.env.SUPABASE_URL),
-      SUPABASE_ANON_KEY: JSON.stringify(process.env.SUPABASE_ANON_KEY),
-      NODE_ENV: JSON.stringify(process.env.NODE_ENV || 'development')
-    },
+    'process.env.API_KEY': JSON.stringify(process.env.API_KEY),
+    'process.env.SUPABASE_URL': JSON.stringify(process.env.SUPABASE_URL),
+    'process.env.SUPABASE_ANON_KEY': JSON.stringify(process.env.SUPABASE_ANON_KEY),
+    'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development')
+  },
+  server: {
+    port: 3000
   },
   build: {
     outDir: 'dist',
     sourcemap: false,
     minify: 'esbuild',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom'],
+          'ui-vendor': ['lucide-react', 'recharts', 'xlsx'],
+        },
+      },
+    },
   }
 });

@@ -1,8 +1,7 @@
 import Stripe from 'stripe';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-  // Fixed: Update to the expected Stripe API version string
-  apiVersion: '2025-12-15.clover' as any,
+  apiVersion: '2023-10-16' as any,
 });
 
 export default async function handler(req: any, res: any) {

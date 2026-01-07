@@ -1,5 +1,7 @@
 {
   "name": "InvoiceIntel_2",
   "description": "A smart expense tracking application that uses AI to extract data from invoices and receipts (PDF, PNG, JPEG), stores them locally, and provides analytics and export capabilities.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "camera"
+  ]
 }
