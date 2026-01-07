@@ -3,18 +3,19 @@ import { PRICING_PACKAGES } from './userService';
 
 export const stripeService = {
   /**
-   * Redirects the user to a real Stripe Checkout page hosted on your Vercel API.
+   * Redirects the user to a real Stripe Checkout page hosted on Netlify Functions.
    */
   redirectToCheckout: async (user: UserProfile, packageId: string): Promise<void> => {
     const pkg = PRICING_PACKAGES.find(p => p.id === packageId);
     if (!pkg) throw new Error("Invalid package");
 
     try {
-      const response = await fetch('/api/checkout', {
+      // Netlify functions are served under /.netlify/functions/
+      const response = await fetch('/.netlify/functions/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          priceId: pkg.id, // In production, this would be your Stripe Price ID (e.g., price_123...)
+          priceId: pkg.id,
           userId: user.id,
           userEmail: user.email
         })

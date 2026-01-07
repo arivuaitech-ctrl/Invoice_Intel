@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.33.0",
+    "@netlify/functions": "^2.8.2",
     "@supabase/supabase-js": "^2.48.1",
     "@vitejs/plugin-react": "^4.3.4",
     "buffer": "^6.0.3",
