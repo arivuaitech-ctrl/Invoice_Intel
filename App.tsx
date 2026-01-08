@@ -1,13 +1,13 @@
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { 
   BarChart, Bar, Tooltip, ResponsiveContainer, Cell, PieChart, Pie 
 } from 'recharts';
 import { 
   Search, Download, Trash2, Plus, Edit2, AlertTriangle, 
-  Calendar, Filter, PieChart as PieChartIcon, List, Settings, LogOut, Sparkles, Crown, CreditCard,
-  RefreshCw, CheckCircle2, X, Loader2
+  PieChart as PieChartIcon, List, Settings, LogOut, Sparkles, Crown, CreditCard,
+  RefreshCw, CheckCircle2, X, Info
 } from 'lucide-react';
 
 import { ExpenseItem, Stats, SortField, SortOrder, ExpenseCategory, BudgetMap, UserProfile } from './types';
@@ -29,17 +29,6 @@ const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'
 
 type ViewType = 'expenses' | 'analytics';
 
-const formatDate = (rawDate: string) => {
-  if (!rawDate) return new Date().toISOString().split('T')[0];
-  const regex = /^\d{4}-\d{2}-\d{2}$/;
-  if (regex.test(rawDate)) return rawDate;
-  const d = new Date(rawDate);
-  if (!isNaN(d.getTime())) {
-    return d.toISOString().split('T')[0];
-  }
-  return rawDate;
-};
-
 export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
@@ -54,33 +43,28 @@ export default function App() {
   const [progressStatus, setProgressStatus] = useState<string>('');
   const [isBillingLoading, setIsBillingLoading] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<'success' | 'cancelled' | null>(null);
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
   const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ExpenseItem | undefined>(undefined);
 
-  const pollIntervalRef = useRef<number | null>(null);
-
-  // --- Fix: Added missing filteredExpenses and stats derived state ---
+  // Stats derivation
   const filteredExpenses = useMemo(() => {
     return expenses
       .filter((item) => {
-        const matchesSearch =
-          item.vendorName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          item.summary.toLowerCase().includes(searchTerm.toLowerCase());
+        const vendor = item.vendorName || '';
+        const note = item.summary || '';
+        const matchesSearch = vendor.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                              note.toLowerCase().includes(searchTerm.toLowerCase());
         const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
         return matchesSearch && matchesCategory;
       })
       .sort((a, b) => {
         const factor = sortOrder === 'asc' ? 1 : -1;
         if (sortField === 'amount') return (a.amount - b.amount) * factor;
-        if (sortField === 'vendorName') return a.vendorName.localeCompare(b.vendorName) * factor;
-        // Default sort by date
-        const dateA = new Date(a.date).getTime();
-        const dateB = new Date(b.date).getTime();
-        return (dateA - dateB) * factor;
+        return (new Date(a.date).getTime() - new Date(b.date).getTime()) * factor;
       });
   }, [expenses, searchTerm, selectedCategory, sortField, sortOrder]);
 
@@ -90,125 +74,70 @@ export default function App() {
     expenses.forEach((item) => {
       categoryMap.set(item.category, (categoryMap.get(item.category) || 0) + item.amount);
     });
-    const categoryBreakdown = Array.from(categoryMap.entries())
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
-
-    return {
-      totalAmount,
-      count: expenses.length,
-      categoryBreakdown,
-    };
+    const categoryBreakdown = Array.from(categoryMap.entries()).map(([name, value]) => ({ name, value }));
+    return { totalAmount, count: expenses.length, categoryBreakdown };
   }, [expenses]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('payment') === 'success') {
-      setPaymentStatus('success');
-      setIsSyncing(true);
-      setTimeout(() => {
-        window.history.replaceState({}, document.title, window.location.pathname);
-      }, 5000);
+        setPaymentStatus('success');
+        window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
 
-  const manualRefreshProfile = async () => {
-    if (!user) return;
-    setIsSyncing(true);
-    const refreshed = await userService.getProfile(user.id);
-    if (refreshed) {
-        setUser(refreshed);
-        if (refreshed.planId !== 'free') {
-            setIsSyncing(false);
-            setPaymentStatus('success');
-        } else {
-            // If still free, wait a bit then auto-stop
-            setTimeout(() => setIsSyncing(false), 2000);
-        }
-    }
-  };
-
   useEffect(() => {
-    const timer = setTimeout(() => { if (loading) setLoading(false); }, 15000);
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
-        try {
-          const profile = await userService.upsertProfile(session.user);
-          setUser(profile);
-          const data = await db.getAll(session.user.id);
-          setExpenses(data);
-
-          if (paymentStatus === 'success' || (profile.monthlyDocsLimit === 0 && profile.planId === 'free')) {
-             setIsSyncing(true);
-             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-             pollIntervalRef.current = window.setInterval(async () => {
-                const refreshed = await userService.getProfile(session.user.id);
-                if (refreshed && (refreshed.planId !== 'free' || refreshed.monthlyDocsLimit > 0)) {
-                    setUser(refreshed);
-                    setIsSyncing(false);
-                    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-                }
-             }, 3000);
-             setTimeout(() => { if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); setIsSyncing(false); } }, 60000);
-          }
-        } catch (err) { console.error(err); }
+        const profile = await userService.upsertProfile(session.user);
+        setUser(profile);
+        setExpenses(await db.getAll(session.user.id));
       } else {
         setUser(null);
-        setExpenses([]);
       }
       setLoading(false);
     });
-
     setBudgets(db.getBudgets());
-    return () => {
-      subscription.unsubscribe();
-      clearTimeout(timer);
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-    };
-  }, [paymentStatus]);
+    return () => subscription.unsubscribe();
+  }, []);
 
-  const handleLogin = async () => { try { await userService.login(); } catch (err) { console.error(err); } };
-  const handleLogout = async () => { setUser(null); setExpenses([]); await userService.logout(); };
-
-  const handleManageBilling = async () => {
-    if (!user?.stripeCustomerId) {
-      alert("Billing info syncing. Try again in 1 minute.");
-      return;
-    }
-    setIsBillingLoading(true);
-    try { await stripeService.redirectToCustomerPortal(user.stripeCustomerId); } finally { setIsBillingLoading(false); }
+  const refreshProfile = async () => {
+    if (!user) return;
+    setLoading(true);
+    const refreshed = await userService.getProfile(user.id);
+    if (refreshed) setUser(refreshed);
+    setLoading(false);
   };
 
   const handleFilesSelect = async (files: File[]) => {
     if (!user) return;
-    const status = userService.canUpload(user, files.length);
-    if (!status.allowed) { setIsPricingModalOpen(true); return; }
+    if (!userService.canUpload(user, files.length).allowed) {
+        setIsPricingModalOpen(true);
+        return;
+    }
 
     setIsProcessing(true);
     let successCount = 0;
     for (const file of files) {
-        setProgressStatus(`Processing: ${file.name}`);
+        setProgressStatus(`Analyzing ${file.name}...`);
         try {
             const data = await extractInvoiceData(file);
-            const newExpense: ExpenseItem = {
+            const newItem: ExpenseItem = {
                 id: crypto.randomUUID(),
-                vendorName: data.vendorName || 'Unknown Vendor',
-                date: formatDate(data.date),
+                vendorName: data.vendorName || 'Unknown',
+                date: data.date || new Date().toISOString().split('T')[0],
                 amount: Number(data.amount) || 0,
-                currency: 'RM', 
+                currency: 'RM',
                 category: data.category as ExpenseCategory || ExpenseCategory.OTHERS,
                 summary: data.summary || '',
-                createdAt: Date.now(),
-                fileName: file.name,
+                createdAt: Date.now()
             };
-            await db.add(newExpense, user.id);
+            await db.add(newItem, user.id);
             successCount++;
-        } catch (error) { console.error(error); }
+        } catch (e) { console.error(e); }
     }
     if (successCount > 0) {
-        const updatedUser = await userService.recordUsage(user, successCount);
-        setUser(updatedUser);
+        setUser(await userService.recordUsage(user, successCount));
         setExpenses(await db.getAll(user.id));
     }
     setIsProcessing(false);
@@ -217,132 +146,129 @@ export default function App() {
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
-       <div className="flex flex-col items-center animate-pulse">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
-          <p className="text-slate-500 text-sm font-medium">Loading your profile...</p>
+       <div className="flex flex-col items-center">
+          <RefreshCw className="w-10 h-10 text-indigo-600 animate-spin mb-4" />
+          <p className="text-slate-500 font-medium animate-pulse">Checking credentials...</p>
        </div>
     </div>
   );
 
-  if (!user) return <LoginPage onLogin={handleLogin} />;
+  if (!user) return <LoginPage onLogin={userService.login} />;
 
-  const badge = user.isTrialActive 
-    ? { text: `Trial: ${user.monthlyDocsLimit - user.docsUsedThisMonth} left`, color: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
-    : (user.planId === 'free' 
-        ? { text: 'Expired', color: 'bg-red-50 text-red-700 border-red-200' }
-        : { text: `${user.planId.toUpperCase()}: ${user.monthlyDocsLimit - user.docsUsedThisMonth} left`, color: 'bg-indigo-50 text-indigo-700 border-indigo-200' });
+  const badge = user.planId === 'free' 
+    ? { text: `Trial: ${user.monthlyDocsLimit - user.docsUsedThisMonth} left`, color: 'bg-emerald-50 text-emerald-700' }
+    : { text: `${user.planId.toUpperCase()} Plan`, color: 'bg-indigo-50 text-indigo-700' };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
+    <div className="min-h-screen bg-slate-50 text-slate-900 pb-12">
+      <header className="bg-white border-b sticky top-0 z-30 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-xs">RM</span>
-              </div>
-              <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-violet-600">InvoiceIntel</h1>
-            </div>
-            
-            <div className="hidden md:flex bg-slate-100 p-1 rounded-lg">
-                <button onClick={() => setView('expenses')} className={`flex items-center px-4 py-1.5 text-sm font-semibold rounded-md ${view === 'expenses' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}><List className="w-4 h-4 mr-2" />Expenses</button>
-                <button onClick={() => setView('analytics')} className={`flex items-center px-4 py-1.5 text-sm font-semibold rounded-md ${view === 'analytics' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}><PieChartIcon className="w-4 h-4 mr-2" />Analytics</button>
+                <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-xs">II</div>
+                <h1 className="text-xl font-bold text-slate-900">InvoiceIntel</h1>
             </div>
 
             <div className="flex items-center gap-3">
-              <button onClick={() => setIsPricingModalOpen(true)} className={`flex items-center px-3 py-1.5 rounded-full text-xs font-bold border ${badge.color}`}>
-                  {user.isTrialActive ? <Sparkles className="w-3 h-3 mr-1.5" /> : <Crown className="w-3 h-3 mr-1.5" />}
-                  {badge.text}
-              </button>
-              
-              <div className="flex items-center gap-2 border-l pl-3 ml-1">
-                  {user.stripeCustomerId && (
-                    <button onClick={handleManageBilling} disabled={isBillingLoading} className="text-slate-500 hover:text-indigo-600 p-2" title="Billing"><CreditCard className="w-5 h-5" /></button>
-                  )}
-                  <button onClick={handleLogout} className="text-slate-400 hover:text-red-600 p-2" title="Logout"><LogOut className="w-5 h-5" /></button>
-              </div>
+                <div className={`px-3 py-1.5 rounded-full text-xs font-bold border ${badge.color} flex items-center gap-2`}>
+                   {user.planId === 'free' ? <Sparkles className="w-3 h-3"/> : <Crown className="w-3 h-3"/>}
+                   {badge.text}
+                </div>
+                <button onClick={refreshProfile} className="p-2 text-slate-400 hover:text-indigo-600 transition-colors" title="Sync Account"><RefreshCw className="w-5 h-5"/></button>
+                <button onClick={userService.logout} className="p-2 text-slate-400 hover:text-red-600" title="Logout"><LogOut className="w-5 h-5"/></button>
             </div>
-          </div>
         </div>
       </header>
 
-      {isSyncing && (
-        <div className="bg-indigo-600 text-white">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-center gap-3 text-sm font-medium">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Syncing your subscription... </span>
-                <button onClick={manualRefreshProfile} className="underline text-xs bg-white/10 px-2 py-0.5 rounded">Check now</button>
-            </div>
-        </div>
-      )}
-
-      {paymentStatus === 'success' && !isSyncing && (
-        <div className="bg-emerald-600 text-white animate-fadeIn">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
-                <div className="flex items-center gap-2 font-semibold"><CheckCircle2 className="w-5 h-5" /><span>Success! Account upgraded.</span></div>
-                <button onClick={() => setPaymentStatus(null)}><X className="w-4 h-4" /></button>
-            </div>
+      {paymentStatus === 'success' && (
+        <div className="bg-emerald-600 text-white p-3 text-center text-sm font-semibold flex items-center justify-center gap-2">
+            <CheckCircle2 className="w-4 h-4" />
+            Payment Successful! If your plan isn't updated yet, please wait 30 seconds and click the sync button.
+            <button onClick={() => setPaymentStatus(null)} className="ml-4 opacity-70 hover:opacity-100"><X className="w-4 h-4"/></button>
         </div>
       )}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        {view === 'expenses' ? (
-        <>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-1">
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-indigo-500" />Add Invoices</h2>
-                        <FileUpload onFilesSelect={handleFilesSelect} isProcessing={isProcessing} isDisabled={!userService.canUpload(user, 1).allowed} disabledMessage={user.monthlyDocsLimit === 0 ? "Account Locked: Upgrade to continue" : undefined} />
-                        {progressStatus && <div className="mt-4 p-3 bg-indigo-50 text-indigo-700 rounded-lg text-sm text-center animate-pulse">{progressStatus}</div>}
-                    </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-1 space-y-6">
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h2 className="text-lg font-bold mb-4">Add Invoices</h2>
+                    <FileUpload onFilesSelect={handleFilesSelect} isProcessing={isProcessing} isDisabled={user.monthlyDocsLimit === 0 && user.planId === 'free'} disabledMessage="Trial Expired. Upgrade to continue." />
+                    {progressStatus && <div className="mt-4 p-3 bg-indigo-50 text-indigo-700 text-xs rounded-lg animate-pulse">{progressStatus}</div>}
                 </div>
-                <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                        <p className="text-xs font-bold text-slate-400 uppercase">Total Spent</p>
-                        <p className="text-3xl font-black text-slate-900 mt-1">RM {stats.totalAmount.toFixed(2)}</p>
-                    </div>
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                        <p className="text-xs font-bold text-slate-400 uppercase">Top Category</p>
-                        <p className="text-xl font-black text-slate-900 mt-1">{stats.categoryBreakdown[0]?.name || 'N/A'}</p>
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <h3 className="text-sm font-bold text-slate-400 uppercase mb-4">Summary</h3>
+                    <div className="space-y-4">
+                        <div>
+                            <p className="text-3xl font-black text-slate-900">RM {stats.totalAmount.toFixed(2)}</p>
+                            <p className="text-xs text-slate-500">Total Spent</p>
+                        </div>
+                        <div className="pt-4 border-t">
+                            <button onClick={() => setView(view === 'expenses' ? 'analytics' : 'expenses')} className="w-full py-2 bg-slate-50 text-slate-600 rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-slate-100 transition-all">
+                                {view === 'expenses' ? <PieChartIcon className="w-4 h-4"/> : <List className="w-4 h-4"/>}
+                                {view === 'expenses' ? 'View Analytics' : 'View List'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="p-4 border-b flex flex-col sm:flex-row gap-4 justify-between items-center bg-slate-50/50">
-                    <div className="relative w-full sm:w-96">
-                        <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                        <input type="text" className="w-full pl-10 pr-3 py-2 border rounded-lg text-sm" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+            <div className="lg:col-span-2">
+                {view === 'expenses' ? (
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                        <div className="p-4 border-b flex items-center gap-4 bg-slate-50/50">
+                            <div className="relative flex-1">
+                                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                                <input type="text" placeholder="Search..." className="w-full pl-10 pr-4 py-2 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                            </div>
+                            <Button variant="secondary" onClick={() => setIsPricingModalOpen(true)} icon={<CreditCard className="w-4 h-4"/>}>Plans</Button>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full">
+                                <thead className="bg-slate-50 text-left text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                                    <tr>
+                                        <th className="px-6 py-4">Date</th>
+                                        <th className="px-6 py-4">Vendor</th>
+                                        <th className="px-6 py-4 text-right">Amount</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {filteredExpenses.map(item => (
+                                        <tr key={item.id} className="hover:bg-slate-50 transition-colors">
+                                            <td className="px-6 py-4 text-sm text-slate-500">{item.date}</td>
+                                            <td className="px-6 py-4 text-sm font-bold">{item.vendorName}</td>
+                                            <td className="px-6 py-4 text-sm font-black text-right">RM {item.amount.toFixed(2)}</td>
+                                        </tr>
+                                    ))}
+                                    {filteredExpenses.length === 0 && (
+                                        <tr><td colSpan={3} className="px-6 py-12 text-center text-slate-400 text-sm">No items found.</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                    <div className="flex gap-2">
-                         <Button variant="secondary" onClick={() => setExpenses(expenses)}>Refresh</Button>
-                         <Button variant="secondary" onClick={() => { const ws = XLSX.utils.json_to_sheet(expenses); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Expenses"); XLSX.writeFile(wb, "Expenses.xlsx"); }}>Export</Button>
-                    </div>
-                </div>
-                <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-slate-200">
-                    <thead className="bg-slate-50">
-                        <tr>
-                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase">Date</th>
-                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase">Vendor</th>
-                            <th className="px-6 py-4 text-right text-xs font-bold text-slate-500 uppercase">Amount</th>
-                        </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-slate-100">
-                        {filteredExpenses.map((expense) => (
-                        <tr key={expense.id}>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm">{expense.date}</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-bold">{expense.vendorName}</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-black">RM {expense.amount.toFixed(2)}</td>
-                        </tr>
-                        ))}
-                    </tbody>
-                    </table>
-                </div>
+                ) : (
+                    <AnalyticsView expenses={expenses} budgets={budgets} />
+                )}
             </div>
-        </>
-        ) : <AnalyticsView expenses={expenses} budgets={budgets} />}
+        </div>
       </main>
+
+      <footer className="max-w-7xl mx-auto px-4 text-center mt-12 pb-8">
+          <button onClick={() => setShowDebug(!showDebug)} className="text-[10px] text-slate-300 hover:text-indigo-400 flex items-center gap-1 mx-auto">
+              <Info className="w-3 h-3"/> {showDebug ? 'Hide Debug' : 'Connection Diagnostics'}
+          </button>
+          {showDebug && (
+              <div className="mt-4 p-4 bg-slate-900 text-indigo-300 text-[10px] font-mono rounded-xl text-left max-w-md mx-auto">
+                  <p>USER_ID: {user.id}</p>
+                  <p>EMAIL: {user.email}</p>
+                  <p>PLAN: {user.planId}</p>
+                  <p>DOC_LIMIT: {user.monthlyDocsLimit}</p>
+                  <p className="mt-2 text-white/50 border-t pt-2 border-white/10 italic">
+                      Copy these to your developer for troubleshooting Stripe Metadata.
+                  </p>
+              </div>
+          )}
+      </footer>
 
       <PricingModal isOpen={isPricingModalOpen} onClose={() => setIsPricingModalOpen(false)} user={user} onSuccess={setUser} />
     </div>

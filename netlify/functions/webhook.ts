@@ -7,59 +7,52 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
   apiVersion: '2023-10-16' as any,
 });
 
+// IMPORTANT: Using Service Role Key to bypass RLS for server-side updates
 const supabase = createClient(
   process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || ''
 );
 
-const updateProfile = async (identifier: { id?: string, email?: string }, planId: string, customerId: string) => {
+const updateProfile = async (userId: string | undefined, email: string | undefined, planId: string, customerId: string) => {
+  console.log(`[Webhook] Attempting update. ID: ${userId}, Email: ${email}, Plan: ${planId}`);
+  
   const limits: Record<string, number> = {
     'basic': 30,
     'pro': 100,
     'business': 500
   };
 
-  const updatePayload = { 
+  const payload = { 
     plan_id: planId,
     is_trial_active: false,
-    subscription_expiry: Date.now() + (31 * 24 * 60 * 60 * 1000),
+    subscription_expiry: Date.now() + (32 * 24 * 60 * 60 * 1000), // 32 days for safety
     stripe_customer_id: customerId,
     monthly_docs_limit: limits[planId] || 100,
     docs_used_this_month: 0 
   };
 
-  let query = supabase.from('profiles').update(updatePayload);
-  
-  // Try ID first, then Email
-  if (identifier.id) {
-    query = query.eq('id', identifier.id);
-  } else if (identifier.email) {
-    query = query.eq('email', identifier.email);
-  } else {
-    return false;
-  }
-
-  const { data, error } = await query.select();
-
-  if (error) {
-    console.error("Webhook Supabase Error:", error);
-    return false;
-  }
-  
-  if (!data || data.length === 0) {
-    // If ID failed, try email fallback manually
-    if (identifier.id && identifier.email) {
-        console.log("Webhook: UUID failed, attempting Email fallback for", identifier.email);
-        const fallback = await supabase.from('profiles')
-            .update(updatePayload)
-            .eq('email', identifier.email)
-            .select();
-        return (fallback.data && fallback.data.length > 0);
+  // 1. Try by UUID
+  if (userId) {
+    const { data, error } = await supabase.from('profiles').update(payload).eq('id', userId).select();
+    if (data && data.length > 0) {
+      console.log(`[Webhook] SUCCESS: Updated by UUID ${userId}`);
+      return true;
     }
-    return false;
+    if (error) console.error(`[Webhook] UUID Update Error:`, error);
   }
 
-  return true;
+  // 2. Try by Email
+  if (email) {
+    const { data, error } = await supabase.from('profiles').update(payload).eq('email', email).select();
+    if (data && data.length > 0) {
+      console.log(`[Webhook] SUCCESS: Updated by Email ${email}`);
+      return true;
+    }
+    if (error) console.error(`[Webhook] Email Update Error:`, error);
+  }
+
+  console.error(`[Webhook] FAILED: Could not find user to update.`);
+  return false;
 };
 
 export const handler: Handler = async (event) => {
@@ -67,19 +60,28 @@ export const handler: Handler = async (event) => {
 
   const sig = event.headers['stripe-signature'];
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  let stripeEvent;
 
+  if (!webhookSecret) {
+    console.error("[Webhook] STRIPE_WEBHOOK_SECRET is missing in environment.");
+    return { statusCode: 500, body: "Server configuration error" };
+  }
+
+  let stripeEvent;
   try {
-    stripeEvent = stripe.webhooks.constructEvent(event.body || '', sig || '', webhookSecret || '');
+    stripeEvent = stripe.webhooks.constructEvent(event.body || '', sig || '', webhookSecret);
   } catch (err: any) {
+    console.error(`[Webhook] Signature Verification Failed: ${err.message}`);
     return { statusCode: 400, body: `Webhook Error: ${err.message}` };
   }
+
+  console.log(`[Webhook] Event Received: ${stripeEvent.type}`);
 
   try {
     if (stripeEvent.type === 'checkout.session.completed') {
       const session = stripeEvent.data.object as Stripe.Checkout.Session;
       await updateProfile(
-        { id: session.metadata?.userId, email: session.metadata?.userEmail || session.customer_details?.email || undefined },
+        session.metadata?.userId,
+        session.metadata?.userEmail || session.customer_details?.email || undefined,
         session.metadata?.planId || 'pro',
         session.customer as string
       );
@@ -87,6 +89,7 @@ export const handler: Handler = async (event) => {
 
     return { statusCode: 200, body: JSON.stringify({ received: true }) };
   } catch (err: any) {
+    console.error(`[Webhook] Runtime Exception:`, err);
     return { statusCode: 500, body: "Internal Server Error" };
   }
 };
