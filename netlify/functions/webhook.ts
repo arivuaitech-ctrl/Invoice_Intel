@@ -19,49 +19,43 @@ export const handler: Handler = async (event) => {
 
   const sig = event.headers['stripe-signature'];
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-
   let stripeEvent;
 
   try {
-    stripeEvent = stripe.webhooks.constructEvent(
-      event.body || '',
-      sig || '',
-      webhookSecret || ''
-    );
+    stripeEvent = stripe.webhooks.constructEvent(event.body || '', sig || '', webhookSecret || '');
   } catch (err: any) {
-    console.error(`Webhook Error: ${err.message}`);
     return { statusCode: 400, body: `Webhook Error: ${err.message}` };
   }
 
   if (stripeEvent.type === 'checkout.session.completed') {
     const session = stripeEvent.data.object as Stripe.Checkout.Session;
     const userId = session.metadata?.userId;
+    const planId = session.metadata?.planId || 'pro';
     const customerId = session.customer as string;
     
-    // We need to determine which plan they bought to set the limits
-    // For simplicity in this demo, we mark as 'pro'
-    // In production, you would look up the priceId from session.line_items
-    
+    // Map internal plans to document limits
+    const limits: Record<string, number> = {
+      'basic': 30,
+      'pro': 100,
+      'business': 500
+    };
+
     if (userId) {
-      console.log(`Setting up subscription for user ${userId} with Stripe Customer ${customerId}`);
-      
       const { error } = await supabase
         .from('profiles')
         .update({ 
-          plan_id: 'pro',
+          plan_id: planId,
           is_trial_active: false,
-          subscription_expiry: Date.now() + (30 * 24 * 60 * 60 * 1000),
+          subscription_expiry: Date.now() + (31 * 24 * 60 * 60 * 1000), // 31 days
           stripe_customer_id: customerId,
-          monthly_docs_limit: 100 // Default to Pro limit
+          monthly_docs_limit: limits[planId] || 100,
+          docs_used_this_month: 0 // Reset usage on new sub
         })
         .eq('id', userId);
         
-      if (error) console.error("Supabase Profile Update Error:", error);
+      if (error) console.error("Webhook Supabase Error:", error);
     }
   }
 
-  return {
-    statusCode: 200,
-    body: JSON.stringify({ received: true }),
-  };
+  return { statusCode: 200, body: JSON.stringify({ received: true }) };
 };

@@ -37,10 +37,10 @@ const mapProfile = (data: any): UserProfile => ({
   name: data.name,
   email: data.email,
   avatarUrl: data.avatar_url,
-  planId: data.plan_id,
+  planId: data.plan_id || 'free',
   subscriptionExpiry: data.subscription_expiry,
-  monthlyDocsLimit: data.monthly_docs_limit,
-  docsUsedThisMonth: data.docs_used_this_month,
+  monthlyDocsLimit: data.monthly_docs_limit ?? 10, // Ensure never null/undefined
+  docsUsedThisMonth: data.docs_used_this_month || 0,
   trialStartDate: data.trial_start_date,
   isTrialActive: data.is_trial_active,
   stripeCustomerId: data.stripe_customer_id
@@ -112,7 +112,7 @@ export const userService = {
       trial_start_date: Date.now(),
       is_trial_active: true,
       docs_used_this_month: 0,
-      monthly_docs_limit: 10 // Trial limit
+      monthly_docs_limit: 10 
     };
 
     const { data, error } = await supabase
@@ -131,6 +131,11 @@ export const userService = {
     const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
     const isTrialExpired = (now - user.trialStartDate) > SEVEN_DAYS_MS;
     
+    // Safety check for document limit
+    if (updated.monthlyDocsLimit === 0 && updated.planId === 'free') {
+       updated.monthlyDocsLimit = 10;
+    }
+
     if (user.planId === 'free') {
         updated.isTrialActive = !isTrialExpired;
     } else {
@@ -140,7 +145,7 @@ export const userService = {
     if (user.planId !== 'free' && user.subscriptionExpiry) {
         if (now > user.subscriptionExpiry) {
             updated.planId = 'free';
-            updated.monthlyDocsLimit = 0;
+            updated.monthlyDocsLimit = 0; // Lock account on expiry
             updated.subscriptionExpiry = null;
             updated.isTrialActive = false;
         }
@@ -149,9 +154,8 @@ export const userService = {
   },
 
   canUpload: (user: UserProfile, fileCount: number): { allowed: boolean; reason?: 'trial_limit' | 'plan_limit' | 'expired' } => {
-    const TRIAL_DOC_LIMIT = 10;
     if (user.isTrialActive && user.planId === 'free') {
-        if (user.docsUsedThisMonth + fileCount > TRIAL_DOC_LIMIT) return { allowed: false, reason: 'trial_limit' };
+        if (user.docsUsedThisMonth + fileCount > user.monthlyDocsLimit) return { allowed: false, reason: 'trial_limit' };
         return { allowed: true };
     }
     if (user.planId !== 'free') {

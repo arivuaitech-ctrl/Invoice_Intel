@@ -7,7 +7,7 @@ import {
 import { 
   Search, Download, Trash2, Plus, Edit2, AlertTriangle, 
   Calendar, Filter, PieChart as PieChartIcon, List, Settings, LogOut, Sparkles, Crown, CreditCard,
-  RefreshCw, CheckCircle2, X
+  RefreshCw, CheckCircle2, X, Loader2
 } from 'lucide-react';
 
 import { ExpenseItem, Stats, SortField, SortOrder, ExpenseCategory, BudgetMap, UserProfile } from './types';
@@ -54,6 +54,7 @@ export default function App() {
   const [progressStatus, setProgressStatus] = useState<string>('');
   const [isBillingLoading, setIsBillingLoading] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<'success' | 'cancelled' | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
@@ -67,26 +68,22 @@ export default function App() {
     
     if (payment === 'success') {
       setPaymentStatus('success');
-      // Clean URL after 2 seconds
+      setIsSyncing(true);
       setTimeout(() => {
         window.history.replaceState({}, document.title, window.location.pathname);
-      }, 2000);
+      }, 3000);
     } else if (payment === 'cancelled') {
       setPaymentStatus('cancelled');
       setTimeout(() => {
         window.history.replaceState({}, document.title, window.location.pathname);
-      }, 2000);
+      }, 3000);
     }
   }, []);
 
   useEffect(() => {
-    // Safety timeout to prevent infinite loading spinner
     const timer = setTimeout(() => {
-      if (loading) {
-        console.warn("Auth check taking longer than expected...");
-        setLoading(false);
-      }
-    }, 10000);
+      if (loading) setLoading(false);
+    }, 12000);
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
@@ -96,18 +93,22 @@ export default function App() {
           const data = await db.getAll(session.user.id);
           setExpenses(data);
 
-          // If we just had a successful payment, re-check the profile after a few seconds
-          // to give the Netlify webhook time to finish its work
-          const params = new URLSearchParams(window.location.search);
-          if (params.get('payment') === 'success') {
-             setTimeout(async () => {
+          // If we are in success mode but plan is still free, poll the database
+          if (paymentStatus === 'success' || (profile.planId === 'free' && profile.monthlyDocsLimit === 0)) {
+             const pollInterval = setInterval(async () => {
                 const refreshed = await userService.getProfile(session.user.id);
-                if (refreshed) setUser(refreshed);
-             }, 3000);
+                if (refreshed && refreshed.planId !== 'free') {
+                    setUser(refreshed);
+                    setIsSyncing(false);
+                    setPaymentStatus('success');
+                    clearInterval(pollInterval);
+                }
+             }, 4000);
+             setTimeout(() => clearInterval(pollInterval), 60000); // Stop polling after 1 minute
           }
 
         } catch (err: any) {
-          console.error("Auth Initialization Error:", err);
+          console.error("Auth Init Error:", err);
         }
       } else {
         setUser(null);
@@ -122,7 +123,7 @@ export default function App() {
       subscription.unsubscribe();
       clearTimeout(timer);
     };
-  }, []);
+  }, [paymentStatus]);
 
   const handleLogin = async () => {
     try {
@@ -321,7 +322,7 @@ export default function App() {
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
        <div className="flex flex-col items-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
-          <p className="text-slate-500 text-sm font-medium animate-pulse">Initializing InvoiceIntel...</p>
+          <p className="text-slate-500 text-sm font-medium animate-pulse tracking-wide">Initializing InvoiceIntel...</p>
        </div>
     </div>
   );
@@ -340,44 +341,44 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+              <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-indigo-100 shadow-lg">
                 <span className="text-white font-bold text-xs">RM</span>
               </div>
               <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-violet-600">InvoiceIntel</h1>
             </div>
             
             <div className="hidden md:flex bg-slate-100 p-1 rounded-lg">
-                <button onClick={() => setView('expenses')} className={`flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-all ${view === 'expenses' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}><List className="w-4 h-4 mr-2" />Expenses</button>
-                <button onClick={() => setView('analytics')} className={`flex items-center px-3 py-1.5 text-sm font-medium rounded-md transition-all ${view === 'analytics' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}><PieChartIcon className="w-4 h-4 mr-2" />Analytics</button>
+                <button onClick={() => setView('expenses')} className={`flex items-center px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${view === 'expenses' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}><List className="w-4 h-4 mr-2" />Expenses</button>
+                <button onClick={() => setView('analytics')} className={`flex items-center px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${view === 'analytics' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}><PieChartIcon className="w-4 h-4 mr-2" />Analytics</button>
             </div>
 
             <div className="flex items-center gap-3">
-              <button onClick={() => setIsPricingModalOpen(true)} className={`flex items-center px-3 py-1.5 rounded-full text-xs font-semibold border ${badge.color}`}>
+              <button onClick={() => setIsPricingModalOpen(true)} className={`flex items-center px-3 py-1.5 rounded-full text-xs font-bold border transition-all hover:scale-105 active:scale-95 ${badge.color}`}>
                   {user.isTrialActive ? <Sparkles className="w-3 h-3 mr-1.5" /> : <Crown className="w-3 h-3 mr-1.5" />}
                   {badge.text}
               </button>
               
-              <div className="flex items-center gap-2 border-l pl-3">
+              <div className="flex items-center gap-2 border-l pl-3 ml-1">
                   {user.stripeCustomerId && (
                     <button 
                       onClick={handleManageBilling}
                       disabled={isBillingLoading}
-                      className="flex items-center justify-center text-slate-500 hover:text-indigo-600 p-2 rounded-xl hover:bg-indigo-50 transition-all"
+                      className="flex items-center justify-center text-slate-500 hover:text-indigo-600 p-2 rounded-xl hover:bg-indigo-50 transition-all group"
                       title="Manage Subscription"
                     >
-                      {isBillingLoading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <CreditCard className="w-5 h-5" />}
+                      {isBillingLoading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <CreditCard className="w-5 h-5 group-hover:scale-110" />}
                     </button>
                   )}
                   <button 
                     onClick={handleLogout} 
-                    className="flex items-center justify-center text-slate-400 hover:text-red-600 p-2 rounded-xl hover:bg-red-50 transition-all" 
+                    className="flex items-center justify-center text-slate-400 hover:text-red-600 p-2 rounded-xl hover:bg-red-50 transition-all group" 
                     title="Logout"
                   >
-                    <LogOut className="w-5 h-5" />
+                    <LogOut className="w-5 h-5 group-hover:translate-x-0.5" />
                   </button>
               </div>
             </div>
@@ -385,23 +386,34 @@ export default function App() {
         </div>
       </header>
 
-      {/* Payment Success Alert */}
-      {paymentStatus === 'success' && (
-        <div className="bg-indigo-600 text-white animate-fadeIn">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
-                <div className="flex items-center gap-2 font-medium">
-                    <CheckCircle2 className="w-5 h-5" />
-                    <span>Payment successful! Welcome to {user.planId === 'pro' ? 'Pro' : 'your new plan'}.</span>
-                </div>
-                {/* Fixed missing X icon import from lucide-react */}
-                <button onClick={() => setPaymentStatus(null)} className="text-white/80 hover:text-white"><X className="w-4 h-4" /></button>
+      {/* Syncing Status Alert */}
+      {isSyncing && (
+        <div className="bg-indigo-600 text-white animate-pulse">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-center gap-3 text-sm font-medium">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Syncing your subscription status with Stripe...</span>
             </div>
         </div>
       )}
 
-      {user.isTrialActive && !paymentStatus && (
-          <div className="bg-indigo-600 text-white text-xs text-center py-2">
-              Free Trial: <strong>{10 - user.docsUsedThisMonth} documents</strong> left. <button onClick={() => setIsPricingModalOpen(true)} className="underline ml-1">Upgrade</button>
+      {/* Payment Success Alert */}
+      {paymentStatus === 'success' && !isSyncing && (
+        <div className="bg-emerald-600 text-white animate-fadeIn">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-2 font-semibold">
+                    <CheckCircle2 className="w-5 h-5" />
+                    <span>Payment verified! Your plan is now active.</span>
+                </div>
+                <button onClick={() => setPaymentStatus(null)} className="text-white/80 hover:text-white p-1 rounded-full hover:bg-white/10"><X className="w-4 h-4" /></button>
+            </div>
+        </div>
+      )}
+
+      {user.isTrialActive && !paymentStatus && !isSyncing && (
+          <div className="bg-amber-500 text-white text-xs font-bold text-center py-2 flex items-center justify-center gap-2">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Free Trial: <strong>{10 - user.docsUsedThisMonth} documents</strong> left. 
+              <button onClick={() => setIsPricingModalOpen(true)} className="underline ml-1 hover:text-white/80">Upgrade Now</button>
           </div>
       )}
 
@@ -412,70 +424,82 @@ export default function App() {
             <div className="lg:col-span-1">
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-indigo-500" />Add Invoices</h2>
-                    <FileUpload onFilesSelect={handleFilesSelect} isProcessing={isProcessing} isDisabled={!userService.canUpload(user, 1).allowed} />
-                    {progressStatus && <div className="mt-4 p-3 bg-indigo-50 text-indigo-700 rounded-lg text-sm text-center animate-pulse">{progressStatus}</div>}
-                    <div className="mt-4 pt-4 border-t text-center"><button onClick={() => setIsModalOpen(true)} className="text-sm text-indigo-600 hover:underline">Or enter manually</button></div>
+                    <FileUpload onFilesSelect={handleFilesSelect} isProcessing={isProcessing} isDisabled={!userService.canUpload(user, 1).allowed} disabledMessage={user.monthlyDocsLimit === 0 ? "Account blocked: Update payment" : undefined} />
+                    {progressStatus && <div className="mt-4 p-3 bg-indigo-50 text-indigo-700 rounded-lg text-sm text-center font-medium border border-indigo-100 animate-pulse">{progressStatus}</div>}
+                    <div className="mt-4 pt-4 border-t text-center"><button onClick={() => setIsModalOpen(true)} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800 underline-offset-4 hover:underline">Or enter manually</button></div>
                 </div>
             </div>
             <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Expenses</p>
-                    <p className="text-3xl font-bold text-slate-900 mt-1">RM {stats.totalAmount.toFixed(2)}</p>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Expenses</p>
+                    <p className="text-3xl font-black text-slate-900 mt-1">RM {stats.totalAmount.toFixed(2)}</p>
                     <div className="h-24 mt-4">
                         <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={stats.categoryBreakdown}><Bar dataKey="value">{stats.categoryBreakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Bar></BarChart>
+                            <BarChart data={stats.categoryBreakdown}><Bar dataKey="value" radius={[4, 4, 0, 0]}>{stats.categoryBreakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Bar></BarChart>
                         </ResponsiveContainer>
                     </div>
                 </div>
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Top Category</p>
-                    <p className="text-xl font-bold text-slate-900 mt-1">{stats.categoryBreakdown[0]?.name || 'N/A'}</p>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Top Category</p>
+                    <p className="text-xl font-black text-slate-900 mt-1">{stats.categoryBreakdown[0]?.name || 'N/A'}</p>
                     <div className="h-24 mt-4">
                         <ResponsiveContainer width="100%" height="100%">
-                            <PieChart><Pie data={stats.categoryBreakdown} dataKey="value" innerRadius={20} outerRadius={35}>{stats.categoryBreakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Pie></PieChart>
+                            <PieChart><Pie data={stats.categoryBreakdown} dataKey="value" innerRadius={20} outerRadius={35} paddingAngle={2}>{stats.categoryBreakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Pie></PieChart>
                         </ResponsiveContainer>
                     </div>
                 </div>
             </div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="p-4 border-b flex flex-col sm:flex-row gap-4 justify-between items-center bg-slate-50/50">
                     <div className="relative w-full sm:w-96">
-                        <input type="text" className="w-full pl-10 pr-3 py-2 border rounded-lg text-sm" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <Search className="h-4 w-4 text-slate-400" />
+                        </div>
+                        <input type="text" className="w-full pl-10 pr-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="Search by vendor or notes..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                     </div>
-                    <div className="flex gap-2">
-                         <Button variant="secondary" onClick={() => setIsBudgetModalOpen(true)} icon={<Settings className="w-4 h-4"/>}>Budget</Button>
-                         <Button variant="secondary" onClick={handleExport} icon={<Download className="w-4 h-4"/>}>Export</Button>
-                         <Button variant="danger" onClick={handleClearAll} icon={<Trash2 className="w-4 h-4"/>}>Clear</Button>
+                    <div className="flex gap-2 w-full sm:w-auto">
+                         <Button variant="secondary" className="flex-1 sm:flex-none" onClick={() => setIsBudgetModalOpen(true)} icon={<Settings className="w-4 h-4"/>}>Budget</Button>
+                         <Button variant="secondary" className="flex-1 sm:flex-none" onClick={handleExport} icon={<Download className="w-4 h-4"/>}>Export</Button>
+                         <Button variant="danger" className="flex-1 sm:flex-none" onClick={handleClearAll} icon={<Trash2 className="w-4 h-4"/>}>Clear</Button>
                     </div>
                 </div>
                 <div className="overflow-x-auto">
                     <table className="min-w-full divide-y divide-slate-200">
                     <thead className="bg-slate-50">
                         <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Date</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Vendor</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Category</th>
-                        <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase">Amount</th>
-                        <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
+                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Date</th>
+                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Vendor</th>
+                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Category</th>
+                        <th className="px-6 py-4 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Amount</th>
+                        <th className="px-6 py-4 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Actions</th>
                         </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-slate-200">
-                        {filteredExpenses.map((expense) => (
-                        <tr key={expense.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600 font-medium">{expense.date}</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-slate-900">{expense.vendorName}</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm"><span className="px-2.5 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-600 border border-indigo-100">{expense.category}</span></td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-mono font-bold text-slate-900">
+                    <tbody className="bg-white divide-y divide-slate-100">
+                        {filteredExpenses.length > 0 ? filteredExpenses.map((expense) => (
+                        <tr key={expense.id} className="hover:bg-slate-50/80 transition-colors group">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 font-medium">{expense.date}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-slate-900">{expense.vendorName}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm"><span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-600 border border-indigo-100">{expense.category}</span></td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-mono font-black text-slate-900">
                               RM {(Number(expense.amount) || 0).toFixed(2)}
                             </td>
                             <td className="px-6 py-4 text-right text-sm font-medium">
-                                <button onClick={() => { setEditingItem(expense); setIsModalOpen(true); }} className="text-indigo-600 hover:text-indigo-800 p-1.5 transition-colors"><Edit2 className="w-4 h-4" /></button>
-                                <button onClick={() => handleDelete(expense.id)} className="text-red-500 hover:text-red-700 p-1.5 transition-colors ml-1"><Trash2 className="w-4 h-4" /></button>
+                                <button onClick={() => { setEditingItem(expense); setIsModalOpen(true); }} className="text-slate-400 hover:text-indigo-600 p-2 transition-all rounded-lg hover:bg-indigo-50" title="Edit"><Edit2 className="w-4 h-4" /></button>
+                                <button onClick={() => handleDelete(expense.id)} className="text-slate-400 hover:text-red-600 p-2 transition-all rounded-lg hover:bg-red-50 ml-1" title="Delete"><Trash2 className="w-4 h-4" /></button>
                             </td>
                         </tr>
-                        ))}
+                        )) : (
+                          <tr>
+                            <td colSpan={5} className="px-6 py-12 text-center">
+                              <div className="flex flex-col items-center text-slate-400">
+                                <Search className="w-8 h-8 mb-2 opacity-20" />
+                                <p className="text-sm font-medium">No transactions found.</p>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
                     </tbody>
                     </table>
                 </div>
