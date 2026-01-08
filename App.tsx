@@ -6,13 +6,15 @@ import {
 } from 'recharts';
 import { 
   Search, Download, Trash2, Plus, Edit2, AlertTriangle, 
-  Calendar, Filter, PieChart as PieChartIcon, List, Settings, LogOut, Sparkles, Crown
+  Calendar, Filter, PieChart as PieChartIcon, List, Settings, LogOut, Sparkles, Crown, CreditCard,
+  RefreshCw
 } from 'lucide-react';
 
 import { ExpenseItem, Stats, SortField, SortOrder, ExpenseCategory, BudgetMap, UserProfile } from './types';
 import { db } from './services/db';
 import { extractInvoiceData } from './services/geminiService';
 import { userService } from './services/userService';
+import { stripeService } from './services/stripeService';
 import { supabase } from './services/supabaseClient';
 
 import FileUpload from './components/FileUpload';
@@ -50,6 +52,7 @@ export default function App() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [view, setView] = useState<ViewType>('expenses');
   const [progressStatus, setProgressStatus] = useState<string>('');
+  const [isBillingLoading, setIsBillingLoading] = useState(false);
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
@@ -90,14 +93,25 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      // Clear UI state immediately
       setUser(null);
       setExpenses([]);
       setView('expenses');
-      // Then inform Supabase
       await userService.logout();
     } catch (err) {
       console.error("Logout error:", err);
+    }
+  };
+
+  const handleManageBilling = async () => {
+    if (!user?.stripeCustomerId) {
+      alert("Billing info not found. If you just subscribed, please refresh the page in a few minutes.");
+      return;
+    }
+    setIsBillingLoading(true);
+    try {
+      await stripeService.redirectToCustomerPortal(user.stripeCustomerId);
+    } finally {
+      setIsBillingLoading(false);
     }
   };
 
@@ -173,8 +187,6 @@ export default function App() {
 
   const handleSaveExpense = async (item: ExpenseItem) => {
     if (!user) return;
-    
-    // Optimistic Update: Update UI before waiting for DB
     const oldExpenses = [...expenses];
     const cleanedItem = { ...item, date: formatDate(item.date) };
     
@@ -191,12 +203,11 @@ export default function App() {
           await db.add(cleanedItem, user.id);
           checkBudgetWarning(item.category, item.amount);
         }
-        // Final sync just in case
         await refreshExpenses();
     } catch (e: any) {
       console.error("Save failed:", e);
-      setExpenses(oldExpenses); // Rollback on failure
-      alert("Failed to save. If you're on Supabase, ensure RLS policies are active.");
+      setExpenses(oldExpenses);
+      alert("Failed to save.");
     }
   };
 
@@ -208,16 +219,14 @@ export default function App() {
   const handleDelete = async (id: string) => {
     if (!user) return;
     if (window.confirm("Are you sure you want to delete this expense?")) {
-      // Optimistic Delete
       const oldExpenses = [...expenses];
       setExpenses(prev => prev.filter(e => e.id !== id));
-
       try {
         await db.delete(id, user.id);
       } catch (err) {
         console.error("Delete failed:", err);
-        setExpenses(oldExpenses); // Rollback
-        alert("Could not delete item. You might not have permission (Check RLS Policies).");
+        setExpenses(oldExpenses);
+        alert("Could not delete item.");
       }
     }
   };
@@ -307,7 +316,18 @@ export default function App() {
                   {user.isTrialActive ? <Sparkles className="w-3 h-3 mr-1.5" /> : <Crown className="w-3 h-3 mr-1.5" />}
                   {badge.text}
               </button>
+              
               <div className="flex items-center gap-2 border-l pl-3">
+                  {user.stripeCustomerId && (
+                    <button 
+                      onClick={handleManageBilling}
+                      disabled={isBillingLoading}
+                      className="flex items-center justify-center text-slate-500 hover:text-indigo-600 p-2 rounded-xl hover:bg-indigo-50 transition-all"
+                      title="Manage Subscription"
+                    >
+                      {isBillingLoading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <CreditCard className="w-5 h-5" />}
+                    </button>
+                  )}
                   <button 
                     onClick={handleLogout} 
                     className="flex items-center justify-center text-slate-400 hover:text-red-600 p-2 rounded-xl hover:bg-red-50 transition-all" 

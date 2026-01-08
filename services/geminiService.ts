@@ -23,7 +23,7 @@ export const fileToGenerativePart = async (file: File): Promise<{ mimeType: stri
   });
 };
 
-// Removed explicit Schema type as guidelines recommend plain objects for responseSchema
+// Plain object for responseSchema recommended for structured extraction
 const expenseSchema = {
   type: Type.OBJECT,
   properties: {
@@ -44,16 +44,18 @@ const expenseSchema = {
 export const extractInvoiceData = async (file: File) => {
   try {
     // Guidelines: Always use direct access to process.env.API_KEY when initializing.
+    // Guidelines: Create a new GoogleGenAI instance right before making an API call.
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const filePart = await fileToGenerativePart(file);
-    const modelId = 'gemini-3-flash-preview';
+    // Guidelines: Use gemini-3-pro-preview for complex reasoning tasks like invoice extraction.
+    const modelId = 'gemini-3-pro-preview';
 
     const result = await ai.models.generateContent({
       model: modelId,
       contents: {
         parts: [
           { inlineData: filePart },
-          { text: "Extract invoice details as JSON." }
+          { text: "Extract invoice details as JSON. Ensure the date is in YYYY-MM-DD format." }
         ]
       },
       config: {

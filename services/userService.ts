@@ -42,7 +42,8 @@ const mapProfile = (data: any): UserProfile => ({
   monthlyDocsLimit: data.monthly_docs_limit,
   docsUsedThisMonth: data.docs_used_this_month,
   trialStartDate: data.trial_start_date,
-  isTrialActive: data.is_trial_active
+  isTrialActive: data.is_trial_active,
+  stripeCustomerId: data.stripe_customer_id
 });
 
 export const userService = {

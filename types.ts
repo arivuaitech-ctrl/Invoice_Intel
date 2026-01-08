@@ -1,3 +1,4 @@
+
 export enum ExpenseCategory {
   FOOD = 'Food',
   UTILITY = 'Utility',
@@ -46,6 +47,7 @@ export interface UserProfile {
   
   trialStartDate: number; 
   isTrialActive: boolean;
+  stripeCustomerId?: string; // Added to handle portal redirects
 }
 
 export interface PricingTier {

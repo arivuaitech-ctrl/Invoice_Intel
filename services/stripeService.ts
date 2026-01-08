@@ -29,7 +29,6 @@ export const stripeService = {
         const errorMsg = data.error || `Error ${response.status}: ${response.statusText}`;
         console.error("Stripe Checkout Error:", errorMsg);
         
-        // Show a clear alert to the user if it's a configuration issue
         if (errorMsg.includes("Configuration Error")) {
           alert("Admin Configuration Required:\n\n" + errorMsg);
         } else {
@@ -39,6 +38,29 @@ export const stripeService = {
     } catch (error: any) {
       console.error("Stripe Service Exception:", error);
       throw error;
+    }
+  },
+
+  /**
+   * Redirects the user to Stripe's hosted Customer Portal to manage/cancel subscription.
+   */
+  redirectToCustomerPortal: async (customerId: string): Promise<void> => {
+    try {
+      const response = await fetch('/.netlify/functions/customer-portal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerId })
+      });
+
+      const data = await response.json();
+      if (response.ok && data.url) {
+        window.location.href = data.url;
+      } else {
+        throw new Error(data.error || "Failed to open billing portal");
+      }
+    } catch (error: any) {
+      console.error("Billing Portal Error:", error);
+      alert("Error: " + error.message);
     }
   }
 };
