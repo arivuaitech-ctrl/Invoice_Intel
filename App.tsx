@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { 
   BarChart, Bar, Tooltip, ResponsiveContainer, Cell, PieChart, Pie 
@@ -61,6 +61,8 @@ export default function App() {
   const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ExpenseItem | undefined>(undefined);
 
+  const pollIntervalRef = useRef<number | null>(null);
+
   // Handle URL cleanup and payment success detection
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -69,9 +71,10 @@ export default function App() {
     if (payment === 'success') {
       setPaymentStatus('success');
       setIsSyncing(true);
+      // Keep URL cleaner, but keep the session info for a few seconds to help debugging if needed
       setTimeout(() => {
         window.history.replaceState({}, document.title, window.location.pathname);
-      }, 3000);
+      }, 5000);
     } else if (payment === 'cancelled') {
       setPaymentStatus('cancelled');
       setTimeout(() => {
@@ -81,9 +84,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Safety timeout to prevent total app hang
     const timer = setTimeout(() => {
       if (loading) setLoading(false);
-    }, 12000);
+    }, 15000);
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
@@ -93,18 +97,31 @@ export default function App() {
           const data = await db.getAll(session.user.id);
           setExpenses(data);
 
-          // If we are in success mode but plan is still free, poll the database
-          if (paymentStatus === 'success' || (profile.planId === 'free' && profile.monthlyDocsLimit === 0)) {
-             const pollInterval = setInterval(async () => {
+          // If the user is currently blocked (limit 0) or just returned from payment, poll the DB aggressively
+          if (paymentStatus === 'success' || (profile.monthlyDocsLimit === 0 && profile.planId === 'free')) {
+             console.log("App: Subscription sync needed. Polling Supabase...");
+             setIsSyncing(true);
+             
+             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+             
+             pollIntervalRef.current = window.setInterval(async () => {
                 const refreshed = await userService.getProfile(session.user.id);
-                if (refreshed && refreshed.planId !== 'free') {
+                if (refreshed && (refreshed.planId !== 'free' || refreshed.monthlyDocsLimit > 0)) {
+                    console.log("App: Sync successful! Account upgraded.");
                     setUser(refreshed);
                     setIsSyncing(false);
                     setPaymentStatus('success');
-                    clearInterval(pollInterval);
+                    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
                 }
-             }, 4000);
-             setTimeout(() => clearInterval(pollInterval), 60000); // Stop polling after 1 minute
+             }, 2000);
+
+             // Stop polling after 2 minutes to save battery/resources
+             setTimeout(() => {
+                 if (pollIntervalRef.current) {
+                     clearInterval(pollIntervalRef.current);
+                     setIsSyncing(false);
+                 }
+             }, 120000);
           }
 
         } catch (err: any) {
@@ -122,6 +139,7 @@ export default function App() {
     return () => {
       subscription.unsubscribe();
       clearTimeout(timer);
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
   }, [paymentStatus]);
 
@@ -332,7 +350,7 @@ export default function App() {
   }
 
   const badgeInfo = () => {
-      if (user.isTrialActive) return { text: `Trial: ${10 - user.docsUsedThisMonth} left`, color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+      if (user.isTrialActive) return { text: `Trial: ${user.monthlyDocsLimit - user.docsUsedThisMonth} left`, color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
       if (user.planId === 'free') return { text: 'Expired', color: 'bg-red-50 text-red-700 border-red-200' };
       const remaining = user.monthlyDocsLimit - user.docsUsedThisMonth;
       return { text: `${user.planId.toUpperCase()}: ${remaining} left`, color: remaining < 5 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200' };
@@ -391,7 +409,7 @@ export default function App() {
         <div className="bg-indigo-600 text-white animate-pulse">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-center gap-3 text-sm font-medium">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Syncing your subscription status with Stripe...</span>
+                <span>Synchronizing your account status... Please wait a moment.</span>
             </div>
         </div>
       )}
@@ -402,7 +420,7 @@ export default function App() {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
                 <div className="flex items-center gap-2 font-semibold">
                     <CheckCircle2 className="w-5 h-5" />
-                    <span>Payment verified! Your plan is now active.</span>
+                    <span>Payment verified! Your account is now active.</span>
                 </div>
                 <button onClick={() => setPaymentStatus(null)} className="text-white/80 hover:text-white p-1 rounded-full hover:bg-white/10"><X className="w-4 h-4" /></button>
             </div>
@@ -412,7 +430,7 @@ export default function App() {
       {user.isTrialActive && !paymentStatus && !isSyncing && (
           <div className="bg-amber-500 text-white text-xs font-bold text-center py-2 flex items-center justify-center gap-2">
               <AlertTriangle className="w-3.5 h-3.5" />
-              Free Trial: <strong>{10 - user.docsUsedThisMonth} documents</strong> left. 
+              Free Trial: <strong>{user.monthlyDocsLimit - user.docsUsedThisMonth} documents</strong> left. 
               <button onClick={() => setIsPricingModalOpen(true)} className="underline ml-1 hover:text-white/80">Upgrade Now</button>
           </div>
       )}
@@ -424,7 +442,7 @@ export default function App() {
             <div className="lg:col-span-1">
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-indigo-500" />Add Invoices</h2>
-                    <FileUpload onFilesSelect={handleFilesSelect} isProcessing={isProcessing} isDisabled={!userService.canUpload(user, 1).allowed} disabledMessage={user.monthlyDocsLimit === 0 ? "Account blocked: Update payment" : undefined} />
+                    <FileUpload onFilesSelect={handleFilesSelect} isProcessing={isProcessing} isDisabled={!userService.canUpload(user, 1).allowed} disabledMessage={user.monthlyDocsLimit === 0 ? "Account Locked: Awaiting Sync" : undefined} />
                     {progressStatus && <div className="mt-4 p-3 bg-indigo-50 text-indigo-700 rounded-lg text-sm text-center font-medium border border-indigo-100 animate-pulse">{progressStatus}</div>}
                     <div className="mt-4 pt-4 border-t text-center"><button onClick={() => setIsModalOpen(true)} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800 underline-offset-4 hover:underline">Or enter manually</button></div>
                 </div>

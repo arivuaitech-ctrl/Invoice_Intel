@@ -39,7 +39,7 @@ const mapProfile = (data: any): UserProfile => ({
   avatarUrl: data.avatar_url,
   planId: data.plan_id || 'free',
   subscriptionExpiry: data.subscription_expiry,
-  monthlyDocsLimit: data.monthly_docs_limit ?? 10, // Ensure never null/undefined
+  monthlyDocsLimit: typeof data.monthly_docs_limit === 'number' ? data.monthly_docs_limit : 10,
   docsUsedThisMonth: data.docs_used_this_month || 0,
   trialStartDate: data.trial_start_date,
   isTrialActive: data.is_trial_active,
@@ -48,14 +48,19 @@ const mapProfile = (data: any): UserProfile => ({
 
 export const userService = {
   getProfile: async (userId: string): Promise<UserProfile | null> => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
 
-    if (error) return null;
-    return userService.refreshUserStatus(mapProfile(data));
+      if (error || !data) return null;
+      return userService.refreshUserStatus(mapProfile(data));
+    } catch (e) {
+      console.error("getProfile error:", e);
+      return null;
+    }
   },
 
   login: async () => {
@@ -129,27 +134,30 @@ export const userService = {
     let updated = { ...user };
     const now = Date.now();
     const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+    
+    // Safety check: trial logic
     const isTrialExpired = (now - user.trialStartDate) > SEVEN_DAYS_MS;
     
-    // Safety check for document limit
-    if (updated.monthlyDocsLimit === 0 && updated.planId === 'free') {
-       updated.monthlyDocsLimit = 10;
-    }
-
-    if (user.planId === 'free') {
-        updated.isTrialActive = !isTrialExpired;
+    if (updated.planId === 'free') {
+      updated.isTrialActive = !isTrialExpired;
+      // If trial is still active but docs limit is somehow 0, reset to trial default (10)
+      if (updated.isTrialActive && updated.monthlyDocsLimit === 0) {
+        updated.monthlyDocsLimit = 10;
+      }
     } else {
-        updated.isTrialActive = false;
+      updated.isTrialActive = false;
     }
 
+    // Only lock paid accounts if they have an actual expiry date set in the past
     if (user.planId !== 'free' && user.subscriptionExpiry) {
-        if (now > user.subscriptionExpiry) {
-            updated.planId = 'free';
-            updated.monthlyDocsLimit = 0; // Lock account on expiry
-            updated.subscriptionExpiry = null;
-            updated.isTrialActive = false;
-        }
+      if (now > user.subscriptionExpiry) {
+        updated.planId = 'free';
+        updated.monthlyDocsLimit = 0; // Lock account on true expiry
+        updated.subscriptionExpiry = null;
+        updated.isTrialActive = false;
+      }
     }
+    
     return updated;
   },
 
@@ -159,7 +167,9 @@ export const userService = {
         return { allowed: true };
     }
     if (user.planId !== 'free') {
-        if (user.subscriptionExpiry && Date.now() > user.subscriptionExpiry) return { allowed: false, reason: 'expired' };
+        // Allow a grace period of 2 hours if expiry is just reached
+        const gracePeriod = 2 * 60 * 60 * 1000;
+        if (user.subscriptionExpiry && (Date.now() > user.subscriptionExpiry + gracePeriod)) return { allowed: false, reason: 'expired' };
         if (user.docsUsedThisMonth + fileCount > user.monthlyDocsLimit) return { allowed: false, reason: 'plan_limit' };
         return { allowed: true };
     }
