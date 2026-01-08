@@ -7,7 +7,7 @@ import {
 import { 
   Search, Download, Trash2, Plus, Edit2, AlertTriangle, 
   Calendar, Filter, PieChart as PieChartIcon, List, Settings, LogOut, Sparkles, Crown, CreditCard,
-  RefreshCw
+  RefreshCw, CheckCircle2, X
 } from 'lucide-react';
 
 import { ExpenseItem, Stats, SortField, SortOrder, ExpenseCategory, BudgetMap, UserProfile } from './types';
@@ -53,13 +53,41 @@ export default function App() {
   const [view, setView] = useState<ViewType>('expenses');
   const [progressStatus, setProgressStatus] = useState<string>('');
   const [isBillingLoading, setIsBillingLoading] = useState(false);
+  const [paymentStatus, setPaymentStatus] = useState<'success' | 'cancelled' | null>(null);
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
   const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ExpenseItem | undefined>(undefined);
 
+  // Handle URL cleanup and payment success detection
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const payment = params.get('payment');
+    
+    if (payment === 'success') {
+      setPaymentStatus('success');
+      // Clean URL after 2 seconds
+      setTimeout(() => {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }, 2000);
+    } else if (payment === 'cancelled') {
+      setPaymentStatus('cancelled');
+      setTimeout(() => {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }, 2000);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Safety timeout to prevent infinite loading spinner
+    const timer = setTimeout(() => {
+      if (loading) {
+        console.warn("Auth check taking longer than expected...");
+        setLoading(false);
+      }
+    }, 10000);
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
         try {
@@ -67,9 +95,19 @@ export default function App() {
           setUser(profile);
           const data = await db.getAll(session.user.id);
           setExpenses(data);
+
+          // If we just had a successful payment, re-check the profile after a few seconds
+          // to give the Netlify webhook time to finish its work
+          const params = new URLSearchParams(window.location.search);
+          if (params.get('payment') === 'success') {
+             setTimeout(async () => {
+                const refreshed = await userService.getProfile(session.user.id);
+                if (refreshed) setUser(refreshed);
+             }, 3000);
+          }
+
         } catch (err: any) {
-          console.error("Auth Change Error:", err);
-          setUser(null);
+          console.error("Auth Initialization Error:", err);
         }
       } else {
         setUser(null);
@@ -80,7 +118,10 @@ export default function App() {
     });
 
     setBudgets(db.getBudgets());
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(timer);
+    };
   }, []);
 
   const handleLogin = async () => {
@@ -278,7 +319,10 @@ export default function App() {
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
-       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+       <div className="flex flex-col items-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+          <p className="text-slate-500 text-sm font-medium animate-pulse">Initializing InvoiceIntel...</p>
+       </div>
     </div>
   );
 
@@ -341,7 +385,21 @@ export default function App() {
         </div>
       </header>
 
-      {user.isTrialActive && (
+      {/* Payment Success Alert */}
+      {paymentStatus === 'success' && (
+        <div className="bg-indigo-600 text-white animate-fadeIn">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-2 font-medium">
+                    <CheckCircle2 className="w-5 h-5" />
+                    <span>Payment successful! Welcome to {user.planId === 'pro' ? 'Pro' : 'your new plan'}.</span>
+                </div>
+                {/* Fixed missing X icon import from lucide-react */}
+                <button onClick={() => setPaymentStatus(null)} className="text-white/80 hover:text-white"><X className="w-4 h-4" /></button>
+            </div>
+        </div>
+      )}
+
+      {user.isTrialActive && !paymentStatus && (
           <div className="bg-indigo-600 text-white text-xs text-center py-2">
               Free Trial: <strong>{10 - user.docsUsedThisMonth} documents</strong> left. <button onClick={() => setIsPricingModalOpen(true)} className="underline ml-1">Upgrade</button>
           </div>
