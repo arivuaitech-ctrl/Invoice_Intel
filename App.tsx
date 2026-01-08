@@ -51,7 +51,6 @@ export default function App() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [view, setView] = useState<ViewType>('expenses');
   const [progressStatus, setProgressStatus] = useState<string>('');
-  const [isBillingLoading, setIsBillingLoading] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<'success' | 'cancelled' | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   
@@ -62,7 +61,7 @@ export default function App() {
 
   const pollIntervalRef = useRef<number | null>(null);
 
-  // Gemini API Key check - Non-blocking UI
+  // Gemini API Key check - Non-blocking UI banner
   const isGeminiKeyMissing = !process.env.API_KEY;
 
   // Handle URL cleanup and payment success detection
@@ -186,7 +185,7 @@ export default function App() {
   async function handleFilesSelect(files: File[]) {
     if (!user) return;
     if (isGeminiKeyMissing) {
-        alert("AI Processing unavailable: GEMINI_API_KEY is missing. Please configure it in Netlify.");
+        alert("AI Processing unavailable: GEMINI_API_KEY is missing. Please configure it in Netlify settings.");
         return;
     }
     const status = userService.canUpload(user, files.length);
@@ -318,13 +317,13 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
-      {/* Non-blocking API Key Warning */}
+      {/* Configuration Status Banner */}
       {isGeminiKeyMissing && (
         <div className="bg-amber-500 text-white animate-slideDown shadow-md relative z-50">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 flex items-center justify-between text-xs font-bold">
                 <div className="flex items-center gap-2">
                     <ShieldAlert className="w-4 h-4" />
-                    <span>AI EXTRACTION OFFLINE: Gemini API Key is missing. Manual entry still works.</span>
+                    <span>AI EXTRACTION OFFLINE: Gemini API Key missing in Netlify. Manual entry still works.</span>
                 </div>
                 <button onClick={() => window.location.reload()} className="underline flex items-center gap-1">
                     <RefreshCw className="w-3 h-3" /> Retry
@@ -358,11 +357,10 @@ export default function App() {
                   {user.stripeCustomerId && (
                     <button 
                       onClick={() => stripeService.redirectToCustomerPortal(user.stripeCustomerId!)}
-                      disabled={isBillingLoading}
                       className="flex items-center justify-center text-slate-500 hover:text-indigo-600 p-2 rounded-xl hover:bg-indigo-50 transition-all group"
                       title="Manage Subscription"
                     >
-                      {isBillingLoading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <CreditCard className="w-5 h-5 group-hover:scale-110" />}
+                      <CreditCard className="w-5 h-5 group-hover:scale-110" />
                     </button>
                   )}
                   <button 
@@ -382,7 +380,7 @@ export default function App() {
         <div className="bg-indigo-600 text-white animate-pulse">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-center gap-3 text-sm font-medium">
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Synchronizing your account status... Please wait a moment.</span>
+                <span>Syncing account status... Please wait.</span>
             </div>
         </div>
       )}
@@ -392,7 +390,7 @@ export default function App() {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
                 <div className="flex items-center gap-2 font-semibold">
                     <CheckCircle2 className="w-5 h-5" />
-                    <span>Payment verified! Your account is now active.</span>
+                    <span>Payment successful! Welcome to your new plan.</span>
                 </div>
                 <button onClick={() => setPaymentStatus(null)} className="text-white/80 hover:text-white p-1 rounded-full hover:bg-white/10"><X className="w-4 h-4" /></button>
             </div>
