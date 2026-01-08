@@ -1,12 +1,10 @@
-
 import { createClient } from '@supabase/supabase-js';
 
-// Fallbacks for the initial load if env variables are missing
-const supabaseUrl = process.env.SUPABASE_URL || 'https://sliimickemtvqlrzprcj.supabase.co';
+const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || '';
 
-if (!supabaseUrl) {
-  console.warn("Supabase configuration missing: SUPABASE_URL is not defined.");
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.warn("Supabase credentials missing. Ensure SUPABASE_URL and SUPABASE_ANON_KEY are set in Netlify environment variables.");
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);

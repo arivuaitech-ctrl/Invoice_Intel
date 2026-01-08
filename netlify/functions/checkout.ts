@@ -1,4 +1,3 @@
-
 import Stripe from 'stripe';
 import { Handler } from '@netlify/functions';
 
@@ -29,12 +28,15 @@ export const handler: Handler = async (event) => {
     if (!stripePriceId || !stripePriceId.startsWith('price_')) {
       return {
         statusCode: 400,
-        body: JSON.stringify({ error: `Configuration Error: Price ID for '${priceId}' not found in environment variables.` }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: `Configuration Error: Price ID for '${priceId}' is missing in Netlify.` }),
       };
     }
 
-    let cleanBaseUrl = 'http://localhost:8888';
+    // Default to the new URL if SITE_URL is not provided
+    let cleanBaseUrl = 'https://invoiceintell.netlify.app';
     const rawUrl = process.env.SITE_URL || event.headers.origin || event.headers.referer;
+    
     if (rawUrl) {
       try {
         cleanBaseUrl = new URL(rawUrl).origin;
@@ -47,12 +49,11 @@ export const handler: Handler = async (event) => {
       payment_method_types: ['card'],
       line_items: [{ price: stripePriceId, quantity: 1 }],
       mode: 'subscription',
-      success_url: `${cleanBaseUrl}/?payment=success`,
+      success_url: `${cleanBaseUrl}/?session_id={CHECKOUT_SESSION_ID}&payment=success`,
       cancel_url: `${cleanBaseUrl}/?payment=cancelled`,
       customer_email: userEmail,
       metadata: { 
         userId,
-        userEmail, // Backup for webhook lookup
         planId: priceId 
       },
       allow_promotion_codes: true,

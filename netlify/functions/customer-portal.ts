@@ -1,4 +1,3 @@
-
 import Stripe from 'stripe';
 import { Handler } from '@netlify/functions';
 
@@ -21,8 +20,7 @@ export const handler: Handler = async (event) => {
       };
     }
 
-    // Determine return URL
-    let returnUrl = 'http://localhost:8888';
+    let returnUrl = 'https://invoiceintell.netlify.app';
     const rawUrl = process.env.SITE_URL || event.headers.origin || event.headers.referer;
     if (rawUrl) {
       try {
@@ -32,7 +30,6 @@ export const handler: Handler = async (event) => {
       }
     }
 
-    // Create a Stripe Customer Portal Session
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
       return_url: returnUrl,
