@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { 
@@ -6,8 +5,8 @@ import {
 } from 'recharts';
 import { 
   Search, Download, Trash2, Plus, Edit2, AlertTriangle, 
-  Calendar, Filter, PieChart as PieChartIcon, List, Settings, LogOut, Sparkles, Crown, CreditCard,
-  RefreshCw, CheckCircle2, X, Loader2
+  PieChart as PieChartIcon, List, Settings, LogOut, Sparkles, Crown, CreditCard,
+  RefreshCw, CheckCircle2, X, Loader2, ShieldAlert
 } from 'lucide-react';
 
 import { ExpenseItem, Stats, SortField, SortOrder, ExpenseCategory, BudgetMap, UserProfile } from './types';
@@ -63,6 +62,9 @@ export default function App() {
 
   const pollIntervalRef = useRef<number | null>(null);
 
+  // Gemini API Key check - Non-blocking UI
+  const isGeminiKeyMissing = !process.env.API_KEY;
+
   // Handle URL cleanup and payment success detection
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -71,7 +73,6 @@ export default function App() {
     if (payment === 'success') {
       setPaymentStatus('success');
       setIsSyncing(true);
-      // Keep URL cleaner, but keep the session info for a few seconds to help debugging if needed
       setTimeout(() => {
         window.history.replaceState({}, document.title, window.location.pathname);
       }, 5000);
@@ -84,11 +85,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // Safety timeout to prevent total app hang
-    const timer = setTimeout(() => {
-      if (loading) setLoading(false);
-    }, 15000);
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
         try {
@@ -97,25 +93,18 @@ export default function App() {
           const data = await db.getAll(session.user.id);
           setExpenses(data);
 
-          // If the user is currently blocked (limit 0) or just returned from payment, poll the DB aggressively
           if (paymentStatus === 'success' || (profile.monthlyDocsLimit === 0 && profile.planId === 'free')) {
-             console.log("App: Subscription sync needed. Polling Supabase...");
              setIsSyncing(true);
-             
              if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-             
              pollIntervalRef.current = window.setInterval(async () => {
                 const refreshed = await userService.getProfile(session.user.id);
                 if (refreshed && (refreshed.planId !== 'free' || refreshed.monthlyDocsLimit > 0)) {
-                    console.log("App: Sync successful! Account upgraded.");
                     setUser(refreshed);
                     setIsSyncing(false);
                     setPaymentStatus('success');
                     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
                 }
              }, 2000);
-
-             // Stop polling after 2 minutes to save battery/resources
              setTimeout(() => {
                  if (pollIntervalRef.current) {
                      clearInterval(pollIntervalRef.current);
@@ -123,14 +112,12 @@ export default function App() {
                  }
              }, 120000);
           }
-
         } catch (err: any) {
           console.error("Auth Init Error:", err);
         }
       } else {
         setUser(null);
         setExpenses([]);
-        setView('expenses');
       }
       setLoading(false);
     });
@@ -138,55 +125,50 @@ export default function App() {
     setBudgets(db.getBudgets());
     return () => {
       subscription.unsubscribe();
-      clearTimeout(timer);
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
   }, [paymentStatus]);
 
-  const handleLogin = async () => {
-    try {
-      await userService.login();
-    } catch (err: any) {
-      console.error("Login trigger failed:", err);
-    }
-  };
+  const filteredExpenses = useMemo(() => {
+    return expenses
+      .filter(item => {
+        const vendor = item.vendorName || '';
+        const summary = item.summary || '';
+        const matchesSearch = vendor.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                              summary.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
+        return matchesSearch && matchesCategory;
+      })
+      .sort((a, b) => {
+        let valA = a[sortField];
+        let valB = b[sortField];
+        if (typeof valA === 'string') valA = valA.toLowerCase();
+        if (typeof valB === 'string') valB = valB.toLowerCase();
+        if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
+        if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+        return 0;
+      });
+  }, [expenses, searchTerm, selectedCategory, sortField, sortOrder]);
 
-  const handleLogout = async () => {
-    try {
-      setUser(null);
-      setExpenses([]);
-      setView('expenses');
-      await userService.logout();
-    } catch (err) {
-      console.error("Logout error:", err);
-    }
-  };
+  const stats = useMemo<Stats>(() => {
+    const totalAmount = filteredExpenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+    const catMap = new Map<string, number>();
+    filteredExpenses.forEach(item => {
+      catMap.set(item.category, (catMap.get(item.category) || 0) + (Number(item.amount) || 0));
+    });
+    const categoryBreakdown = Array.from(catMap.entries()).map(([name, value]) => ({ name, value }));
+    categoryBreakdown.sort((a, b) => b.value - a.value);
+    return { totalAmount, count: filteredExpenses.length, categoryBreakdown };
+  }, [filteredExpenses]);
 
-  const handleManageBilling = async () => {
-    if (!user?.stripeCustomerId) {
-      alert("Billing info not found. If you just subscribed, please refresh the page in a few minutes.");
-      return;
-    }
-    setIsBillingLoading(true);
-    try {
-      await stripeService.redirectToCustomerPortal(user.stripeCustomerId);
-    } finally {
-      setIsBillingLoading(false);
-    }
-  };
-
-  const handleUserUpdate = (updatedUser: UserProfile) => {
-    setUser(updatedUser);
-  };
-
-  const refreshExpenses = async () => {
+  async function refreshExpenses() {
     if (user) {
       const data = await db.getAll(user.id);
       setExpenses(data);
     }
-  };
+  }
 
-  const checkBudgetWarning = (category: ExpenseCategory, amount: number) => {
+  function checkBudgetWarning(category: ExpenseCategory, amount: number) {
     const limit = budgets[category];
     if (limit && limit > 0) {
       const currentTotal = expenses
@@ -199,10 +181,14 @@ export default function App() {
         }, 500);
       }
     }
-  };
+  }
 
-  const handleFilesSelect = async (files: File[]) => {
+  async function handleFilesSelect(files: File[]) {
     if (!user) return;
+    if (isGeminiKeyMissing) {
+        alert("AI Processing unavailable: GEMINI_API_KEY is missing. Please configure it in Netlify.");
+        return;
+    }
     const status = userService.canUpload(user, files.length);
     if (!status.allowed) {
         setIsPricingModalOpen(true);
@@ -243,9 +229,9 @@ export default function App() {
     }
     setIsProcessing(false);
     setProgressStatus('');
-  };
+  }
 
-  const handleSaveExpense = async (item: ExpenseItem) => {
+  async function handleSaveExpense(item: ExpenseItem) {
     if (!user) return;
     const oldExpenses = [...expenses];
     const cleanedItem = { ...item, date: formatDate(item.date) };
@@ -269,14 +255,14 @@ export default function App() {
       setExpenses(oldExpenses);
       alert("Failed to save.");
     }
-  };
+  }
 
-  const handleSaveBudgets = (newBudgets: BudgetMap) => {
+  function handleSaveBudgets(newBudgets: BudgetMap) {
     db.saveBudgets(newBudgets);
     setBudgets(newBudgets);
-  };
+  }
 
-  const handleDelete = async (id: string) => {
+  async function handleDelete(id: string) {
     if (!user) return;
     if (window.confirm("Are you sure you want to delete this expense?")) {
       const oldExpenses = [...expenses];
@@ -289,52 +275,25 @@ export default function App() {
         alert("Could not delete item.");
       }
     }
-  };
+  }
 
-  const handleClearAll = async () => {
+  async function handleClearAll() {
     if (user && window.confirm("Are you sure you want to delete ALL data?")) {
       await db.clearAll(user.id);
       setExpenses([]);
     }
-  };
+  }
 
-  const handleExport = () => {
+  function handleExport() {
     const ws = XLSX.utils.json_to_sheet(expenses.map(({id, createdAt, imageData, ...rest}) => rest));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Expenses");
     XLSX.writeFile(wb, `InvoiceIntel_Export_${new Date().toISOString().split('T')[0]}.xlsx`);
-  };
+  }
 
-  const filteredExpenses = useMemo(() => {
-    return expenses
-      .filter(item => {
-        const vendor = item.vendorName || '';
-        const summary = item.summary || '';
-        const matchesSearch = vendor.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                              summary.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
-        return matchesSearch && matchesCategory;
-      })
-      .sort((a, b) => {
-        let valA = a[sortField];
-        let valB = b[sortField];
-        if (typeof valA === 'string') valA = valA.toLowerCase();
-        if (typeof valB === 'string') valB = valB.toLowerCase();
-        if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
-        if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
-        return 0;
-      });
-  }, [expenses, searchTerm, selectedCategory, sortField, sortOrder]);
-
-  const stats = useMemo<Stats>(() => {
-    const totalAmount = filteredExpenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-    const catMap = new Map<string, number>();
-    filteredExpenses.forEach(item => {
-      catMap.set(item.category, (catMap.get(item.category) || 0) + (Number(item.amount) || 0));
-    });
-    const categoryBreakdown = Array.from(catMap.entries()).map(([name, value]) => ({ name, value }));
-    return { totalAmount, count: filteredExpenses.length, categoryBreakdown };
-  }, [filteredExpenses]);
+  function handleUserUpdate(updatedUser: UserProfile) {
+    setUser(updatedUser);
+  }
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -346,7 +305,7 @@ export default function App() {
   );
 
   if (!user) {
-      return <LoginPage onLogin={handleLogin} />;
+      return <LoginPage onLogin={() => userService.login()} />;
   }
 
   const badgeInfo = () => {
@@ -359,6 +318,21 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
+      {/* Non-blocking API Key Warning */}
+      {isGeminiKeyMissing && (
+        <div className="bg-amber-500 text-white animate-slideDown shadow-md relative z-50">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 flex items-center justify-between text-xs font-bold">
+                <div className="flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4" />
+                    <span>AI EXTRACTION OFFLINE: Gemini API Key is missing. Manual entry still works.</span>
+                </div>
+                <button onClick={() => window.location.reload()} className="underline flex items-center gap-1">
+                    <RefreshCw className="w-3 h-3" /> Retry
+                </button>
+            </div>
+        </div>
+      )}
+
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
@@ -383,7 +357,7 @@ export default function App() {
               <div className="flex items-center gap-2 border-l pl-3 ml-1">
                   {user.stripeCustomerId && (
                     <button 
-                      onClick={handleManageBilling}
+                      onClick={() => stripeService.redirectToCustomerPortal(user.stripeCustomerId!)}
                       disabled={isBillingLoading}
                       className="flex items-center justify-center text-slate-500 hover:text-indigo-600 p-2 rounded-xl hover:bg-indigo-50 transition-all group"
                       title="Manage Subscription"
@@ -392,7 +366,7 @@ export default function App() {
                     </button>
                   )}
                   <button 
-                    onClick={handleLogout} 
+                    onClick={() => userService.logout().then(() => setUser(null))} 
                     className="flex items-center justify-center text-slate-400 hover:text-red-600 p-2 rounded-xl hover:bg-red-50 transition-all group" 
                     title="Logout"
                   >
@@ -404,7 +378,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Syncing Status Alert */}
       {isSyncing && (
         <div className="bg-indigo-600 text-white animate-pulse">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-center gap-3 text-sm font-medium">
@@ -414,7 +387,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Payment Success Alert */}
       {paymentStatus === 'success' && !isSyncing && (
         <div className="bg-emerald-600 text-white animate-fadeIn">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
@@ -427,14 +399,6 @@ export default function App() {
         </div>
       )}
 
-      {user.isTrialActive && !paymentStatus && !isSyncing && (
-          <div className="bg-amber-500 text-white text-xs font-bold text-center py-2 flex items-center justify-center gap-2">
-              <AlertTriangle className="w-3.5 h-3.5" />
-              Free Trial: <strong>{user.monthlyDocsLimit - user.docsUsedThisMonth} documents</strong> left. 
-              <button onClick={() => setIsPricingModalOpen(true)} className="underline ml-1 hover:text-white/80">Upgrade Now</button>
-          </div>
-      )}
-
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         {view === 'expenses' ? (
         <>
@@ -442,7 +406,12 @@ export default function App() {
             <div className="lg:col-span-1">
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-indigo-500" />Add Invoices</h2>
-                    <FileUpload onFilesSelect={handleFilesSelect} isProcessing={isProcessing} isDisabled={!userService.canUpload(user, 1).allowed} disabledMessage={user.monthlyDocsLimit === 0 ? "Account Locked: Awaiting Sync" : undefined} />
+                    <FileUpload 
+                      onFilesSelect={handleFilesSelect} 
+                      isProcessing={isProcessing} 
+                      isDisabled={!userService.canUpload(user, 1).allowed} 
+                      disabledMessage={user.monthlyDocsLimit === 0 ? "Account Locked: Awaiting Sync" : undefined} 
+                    />
                     {progressStatus && <div className="mt-4 p-3 bg-indigo-50 text-indigo-700 rounded-lg text-sm text-center font-medium border border-indigo-100 animate-pulse">{progressStatus}</div>}
                     <div className="mt-4 pt-4 border-t text-center"><button onClick={() => setIsModalOpen(true)} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800 underline-offset-4 hover:underline">Or enter manually</button></div>
                 </div>

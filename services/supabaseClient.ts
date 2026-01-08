@@ -1,11 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-// We use a dummy URL if variables are missing to prevent the SDK from throwing a constructor error on load
-const supabaseUrl = process.env.SUPABASE_URL || 'https://placeholder-url.supabase.co';
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || 'placeholder-key';
-
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-  console.error("CRITICAL: Supabase environment variables are missing. The app will fail to fetch data. Check Netlify Environment Variables.");
-}
+// User provided credentials as defaults
+const supabaseUrl = process.env.SUPABASE_URL || 'https://sliimickemtvqlrzprcj.supabase.co';
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNsaWltaWNrZW10dnFscnpwcmNqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2NDkxNjcsImV4cCI6MjA4MzIyNTE2N30.z5WNCcs5x6ZZMHthL0xSWYBzOjPyNr5N40Y0DPG3MLw';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);

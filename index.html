@@ -30,6 +30,13 @@
       ::-webkit-scrollbar-thumb:hover {
         background: #94a3b8; 
       }
+      @keyframes slideDown {
+        from { transform: translateY(-100%); }
+        to { transform: translateY(0); }
+      }
+      .animate-slideDown {
+        animation: slideDown 0.3s ease-out;
+      }
     </style>
   <script type="importmap">
 {
