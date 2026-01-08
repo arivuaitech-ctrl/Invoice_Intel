@@ -32,19 +32,25 @@ export const PRICING_PACKAGES: PricingTier[] = [
   }
 ];
 
-const mapProfile = (data: any): UserProfile => ({
-  id: data.id,
-  name: data.name,
-  email: data.email,
-  avatarUrl: data.avatar_url,
-  planId: data.plan_id || 'free',
-  subscriptionExpiry: data.subscription_expiry,
-  monthlyDocsLimit: (data.plan_id && data.plan_id !== 'free') ? (data.monthly_docs_limit || 0) : 10,
-  docsUsedThisMonth: data.docs_used_this_month || 0,
-  trialStartDate: data.trial_start_date,
-  isTrialActive: data.is_trial_active !== undefined ? data.is_trial_active : true,
-  stripeCustomerId: data.stripe_customer_id
-});
+const mapProfile = (data: any): UserProfile => {
+  const planId = data.plan_id || 'free';
+  // Fallback: If free, give 10. If paid, use DB value.
+  const limit = (planId === 'free') ? 10 : (data.monthly_docs_limit || 0);
+  
+  return {
+    id: data.id,
+    name: data.name,
+    email: data.email,
+    avatarUrl: data.avatar_url,
+    planId: planId,
+    subscriptionExpiry: data.subscription_expiry,
+    monthlyDocsLimit: limit,
+    docsUsedThisMonth: data.docs_used_this_month || 0,
+    trialStartDate: data.trial_start_date,
+    isTrialActive: data.is_trial_active !== undefined ? data.is_trial_active : true,
+    stripeCustomerId: data.stripe_customer_id
+  };
+};
 
 export const userService = {
   getProfile: async (userId: string): Promise<UserProfile | null> => {
@@ -57,13 +63,18 @@ export const userService = {
     }
   },
 
-  // Added loginWithEmail for OTP auth
+  login: async () => {
+    await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin }
+    });
+  },
+
   loginWithEmail: async (email: string) => {
     const { error } = await supabase.auth.signInWithOtp({ email });
     if (error) throw error;
   },
 
-  // Added verifyOtp for OTP auth verification
   verifyOtp: async (email: string, token: string) => {
     const { error } = await supabase.auth.verifyOtp({
       email,
@@ -71,13 +82,6 @@ export const userService = {
       type: 'email'
     });
     if (error) throw error;
-  },
-
-  login: async () => {
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: window.location.origin }
-    });
   },
 
   logout: async () => {
@@ -113,14 +117,12 @@ export const userService = {
     if (updated.planId === 'free') {
       const isTrialExpired = (now - user.trialStartDate) > SEVEN_DAYS_MS;
       updated.isTrialActive = !isTrialExpired;
-      // Never let limit be 0 for active trial
-      if (updated.isTrialActive) updated.monthlyDocsLimit = 10;
+      updated.monthlyDocsLimit = 10;
     } else {
       updated.isTrialActive = false;
-      // Only set to 0 if we have an explicit expiry date that has passed
       if (user.subscriptionExpiry && now > user.subscriptionExpiry) {
         updated.planId = 'free';
-        updated.monthlyDocsLimit = 0;
+        updated.monthlyDocsLimit = 0; // Account truly expired after payment period
       }
     }
     return updated;

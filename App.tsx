@@ -41,7 +41,6 @@ export default function App() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [view, setView] = useState<ViewType>('expenses');
   const [progressStatus, setProgressStatus] = useState<string>('');
-  const [isBillingLoading, setIsBillingLoading] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<'success' | 'cancelled' | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   
@@ -148,7 +147,7 @@ export default function App() {
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
        <div className="flex flex-col items-center">
           <RefreshCw className="w-10 h-10 text-indigo-600 animate-spin mb-4" />
-          <p className="text-slate-500 font-medium animate-pulse">Checking credentials...</p>
+          <p className="text-slate-500 font-medium">Synchronizing profile...</p>
        </div>
     </div>
   );
@@ -156,8 +155,8 @@ export default function App() {
   if (!user) return <LoginPage onLogin={userService.login} />;
 
   const badge = user.planId === 'free' 
-    ? { text: `Trial: ${user.monthlyDocsLimit - user.docsUsedThisMonth} left`, color: 'bg-emerald-50 text-emerald-700' }
-    : { text: `${user.planId.toUpperCase()} Plan`, color: 'bg-indigo-50 text-indigo-700' };
+    ? { text: `Trial: ${user.monthlyDocsLimit - user.docsUsedThisMonth} left`, color: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+    : { text: `${user.planId.toUpperCase()} Plan`, color: 'bg-indigo-50 text-indigo-700 border-indigo-200' };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-12">
@@ -182,7 +181,7 @@ export default function App() {
       {paymentStatus === 'success' && (
         <div className="bg-emerald-600 text-white p-3 text-center text-sm font-semibold flex items-center justify-center gap-2">
             <CheckCircle2 className="w-4 h-4" />
-            Payment Successful! If your plan isn't updated yet, please wait 30 seconds and click the sync button.
+            Payment Successful! If your plan isn't updated yet, please click the sync button above.
             <button onClick={() => setPaymentStatus(null)} className="ml-4 opacity-70 hover:opacity-100"><X className="w-4 h-4"/></button>
         </div>
       )}
@@ -263,8 +262,8 @@ export default function App() {
                   <p>EMAIL: {user.email}</p>
                   <p>PLAN: {user.planId}</p>
                   <p>DOC_LIMIT: {user.monthlyDocsLimit}</p>
-                  <p className="mt-2 text-white/50 border-t pt-2 border-white/10 italic">
-                      Copy these to your developer for troubleshooting Stripe Metadata.
+                  <p className="mt-2 text-white/50 border-t pt-2 border-white/10 italic text-[9px]">
+                      Copy these to troubleshoot Stripe Metadata mismatches.
                   </p>
               </div>
           )}
