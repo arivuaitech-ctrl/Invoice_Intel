@@ -1,3 +1,4 @@
+
 import { UserProfile, PricingTier } from '../types';
 import { supabase } from './supabaseClient';
 
@@ -31,7 +32,6 @@ export const PRICING_PACKAGES: PricingTier[] = [
   }
 ];
 
-// Helper to map DB row to UserProfile type
 const mapProfile = (data: any): UserProfile => ({
   id: data.id,
   name: data.name,
@@ -58,11 +58,10 @@ export const userService = {
   },
 
   login: async () => {
-    const redirectUrl = window.location.origin;
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: redirectUrl
+        redirectTo: window.location.origin
       }
     });
     if (error) throw error;
@@ -72,7 +71,8 @@ export const userService = {
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        shouldCreateUser: true
+        shouldCreateUser: true,
+        emailRedirectTo: window.location.origin
       }
     });
     if (error) throw error;
@@ -89,11 +89,12 @@ export const userService = {
   },
 
   logout: async () => {
-    await supabase.auth.signOut();
+    const { error } = await supabase.auth.signOut();
+    if (error) console.error("Signout error:", error);
   },
 
   upsertProfile: async (authUser: any): Promise<UserProfile> => {
-    const { data: existing, error: fetchError } = await supabase
+    const { data: existing } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', authUser.id)
@@ -108,7 +109,9 @@ export const userService = {
       avatar_url: authUser.user_metadata?.avatar_url || `https://ui-avatars.com/api/?name=${authUser.email}&background=6366f1&color=fff`,
       plan_id: 'free',
       trial_start_date: Date.now(),
-      is_trial_active: true
+      is_trial_active: true,
+      docs_used_this_month: 0,
+      monthly_docs_limit: 10 // Trial limit
     };
 
     const { data, error } = await supabase
@@ -159,7 +162,7 @@ export const userService = {
   },
 
   recordUsage: async (user: UserProfile, fileCount: number): Promise<UserProfile> => {
-    const newCount = user.docsUsedThisMonth + fileCount;
+    const newCount = (user.docsUsedThisMonth || 0) + fileCount;
     const { data, error } = await supabase
       .from('profiles')
       .update({ docs_used_this_month: newCount })

@@ -1,8 +1,9 @@
+
 import React, { useState } from 'react';
 import { PRICING_PACKAGES } from '../services/userService';
 import { stripeService } from '../services/stripeService';
 import { UserProfile } from '../types';
-import { X, Check, CreditCard, Lock, Sparkles, ShieldCheck } from 'lucide-react';
+import { X, Check, CreditCard, Lock, Sparkles, ShieldCheck, AlertCircle } from 'lucide-react';
 
 interface PricingModalProps {
   isOpen: boolean;
@@ -13,19 +14,19 @@ interface PricingModalProps {
 
 const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose, user, onSuccess }) => {
   const [loadingPkg, setLoadingPkg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
   const handleSubscribe = async (pkgId: string) => {
     setLoadingPkg(pkgId);
+    setError(null);
     try {
-        // Senior Engineer Tip: Never update the DB directly from the frontend for payments.
-        // Always wait for a Stripe Webhook to update your Supabase 'profiles' table.
         await stripeService.redirectToCheckout(user, pkgId);
-        onClose();
-    } catch (error) {
-        console.error("Payment redirect error:", error);
-        alert("Unable to reach payment gateway. Please try again later.");
+        // Browser will redirect to Stripe, so no need to close
+    } catch (err: any) {
+        console.error("Payment redirect error:", err);
+        setError(err.message || "Unable to reach payment gateway. Please check your internet or try again later.");
     } finally {
         setLoadingPkg(null);
     }
@@ -57,6 +58,13 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose, user, onSu
                     <h2 className="text-4xl font-extrabold text-slate-900 tracking-tight">Simple Pricing, No Hidden Fees</h2>
                     <p className="mt-3 text-lg text-slate-500 max-w-2xl mx-auto">Track your expenses like a pro with AI-powered data extraction and advanced analytics.</p>
                 </div>
+
+                {error && (
+                  <div className="mb-8 p-4 bg-red-50 border border-red-100 rounded-xl flex items-center gap-3 animate-shake">
+                    <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
+                    <p className="text-sm text-red-700 font-medium">{error}</p>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                     {PRICING_PACKAGES.map((pkg) => (

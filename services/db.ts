@@ -63,34 +63,42 @@ export const db = {
   },
 
   update: async (updatedItem: ExpenseItem, userId: string): Promise<void> => {
-    // Standard practice: don't send PK or system fields in the 'set' part of the update
     const payload = mapToDb(updatedItem);
     delete payload.id; 
     delete payload.user_id;
     delete payload.created_at; 
     
-    const { error } = await supabase
+    const { data, error, status } = await supabase
       .from('expenses')
       .update(payload)
       .eq('id', updatedItem.id)
-      .eq('user_id', userId); // Critical for RLS compliance
+      .eq('user_id', userId)
+      .select();
 
     if (error) {
-      console.error("Error updating expense:", error);
+      console.error("Supabase Update Error:", error);
       throw error;
+    }
+    
+    if (!data || data.length === 0) {
+      console.warn("Update succeeded but 0 rows affected. Check RLS Policies in Supabase.");
     }
   },
 
   delete: async (id: string, userId: string): Promise<void> => {
-    const { error } = await supabase
+    const { error, status, count } = await supabase
       .from('expenses')
-      .delete()
+      .delete({ count: 'exact' })
       .eq('id', id)
-      .eq('user_id', userId); // Critical for RLS compliance
+      .eq('user_id', userId);
 
     if (error) {
-      console.error("Error deleting expense:", error);
+      console.error("Supabase Delete Error:", error);
       throw error;
+    }
+    
+    if (count === 0) {
+      console.warn("Delete succeeded but 0 rows removed. Check if user_id matches.");
     }
   },
 
