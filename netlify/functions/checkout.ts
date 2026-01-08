@@ -27,17 +27,14 @@ export const handler: Handler = async (event) => {
     const stripePriceId = priceMap[priceId];
 
     if (!stripePriceId || !stripePriceId.startsWith('price_')) {
-      const errorDetail = `Configuration Error: The price ID for '${priceId}' is missing in Netlify.`;
       return {
         statusCode: 400,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: errorDetail }),
+        body: JSON.stringify({ error: `Configuration Error: Price ID for '${priceId}' not found in environment variables.` }),
       };
     }
 
     let cleanBaseUrl = 'http://localhost:8888';
     const rawUrl = process.env.SITE_URL || event.headers.origin || event.headers.referer;
-    
     if (rawUrl) {
       try {
         cleanBaseUrl = new URL(rawUrl).origin;
@@ -50,12 +47,13 @@ export const handler: Handler = async (event) => {
       payment_method_types: ['card'],
       line_items: [{ price: stripePriceId, quantity: 1 }],
       mode: 'subscription',
-      success_url: `${cleanBaseUrl}/?session_id={CHECKOUT_SESSION_ID}&payment=success`,
+      success_url: `${cleanBaseUrl}/?payment=success`,
       cancel_url: `${cleanBaseUrl}/?payment=cancelled`,
       customer_email: userEmail,
       metadata: { 
         userId,
-        planId: priceId // CRITICAL: Tell the webhook what we bought
+        userEmail, // Backup for webhook lookup
+        planId: priceId 
       },
       allow_promotion_codes: true,
     });

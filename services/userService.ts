@@ -39,7 +39,7 @@ const mapProfile = (data: any): UserProfile => ({
   avatarUrl: data.avatar_url,
   planId: data.plan_id || 'free',
   subscriptionExpiry: data.subscription_expiry,
-  monthlyDocsLimit: typeof data.monthly_docs_limit === 'number' ? data.monthly_docs_limit : 10,
+  monthlyDocsLimit: typeof data.monthly_docs_limit === 'number' ? Math.max(data.monthly_docs_limit, (data.plan_id === 'free' ? 10 : 0)) : 10,
   docsUsedThisMonth: data.docs_used_this_month || 0,
   trialStartDate: data.trial_start_date,
   isTrialActive: data.is_trial_active,
@@ -48,64 +48,37 @@ const mapProfile = (data: any): UserProfile => ({
 
 export const userService = {
   getProfile: async (userId: string): Promise<UserProfile | null> => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      if (error || !data) return null;
-      return userService.refreshUserStatus(mapProfile(data));
-    } catch (e) {
-      console.error("getProfile error:", e);
-      return null;
-    }
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    if (error || !data) return null;
+    return userService.refreshUserStatus(mapProfile(data));
   },
 
   login: async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
+    await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        redirectTo: window.location.origin
-      }
+      options: { redirectTo: window.location.origin }
     });
-    if (error) throw error;
   },
 
   loginWithEmail: async (email: string) => {
-    const { error } = await supabase.auth.signInWithOtp({
+    await supabase.auth.signInWithOtp({
       email,
-      options: {
-        shouldCreateUser: true,
-        emailRedirectTo: window.location.origin
-      }
+      options: { shouldCreateUser: true, emailRedirectTo: window.location.origin }
     });
-    if (error) throw error;
   },
 
   verifyOtp: async (email: string, token: string) => {
-    const { data, error } = await supabase.auth.verifyOtp({
-      email,
-      token,
-      type: 'email'
-    });
+    const { data, error } = await supabase.auth.verifyOtp({ email, token, type: 'email' });
     if (error) throw error;
     return data;
   },
 
   logout: async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) console.error("Signout error:", error);
+    await supabase.auth.signOut();
   },
 
   upsertProfile: async (authUser: any): Promise<UserProfile> => {
-    const { data: existing } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', authUser.id)
-      .single();
-
+    const { data: existing } = await supabase.from('profiles').select('*').eq('id', authUser.id).single();
     if (existing) return userService.refreshUserStatus(mapProfile(existing));
 
     const newProfile = {
@@ -120,12 +93,7 @@ export const userService = {
       monthly_docs_limit: 10 
     };
 
-    const { data, error } = await supabase
-      .from('profiles')
-      .upsert(newProfile)
-      .select()
-      .single();
-
+    const { data, error } = await supabase.from('profiles').upsert(newProfile).select().single();
     if (error) throw error;
     return mapProfile(data);
   },
@@ -135,29 +103,18 @@ export const userService = {
     const now = Date.now();
     const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
     
-    // Safety check: trial logic
-    const isTrialExpired = (now - user.trialStartDate) > SEVEN_DAYS_MS;
-    
     if (updated.planId === 'free') {
+      const isTrialExpired = (now - user.trialStartDate) > SEVEN_DAYS_MS;
       updated.isTrialActive = !isTrialExpired;
-      // If trial is still active but docs limit is somehow 0, reset to trial default (10)
-      if (updated.isTrialActive && updated.monthlyDocsLimit === 0) {
-        updated.monthlyDocsLimit = 10;
-      }
+      if (updated.isTrialActive) updated.monthlyDocsLimit = 10;
     } else {
       updated.isTrialActive = false;
-    }
-
-    // Only lock paid accounts if they have an actual expiry date set in the past
-    if (user.planId !== 'free' && user.subscriptionExpiry) {
-      if (now > user.subscriptionExpiry) {
+      if (user.subscriptionExpiry && now > user.subscriptionExpiry) {
         updated.planId = 'free';
-        updated.monthlyDocsLimit = 0; // Lock account on true expiry
-        updated.subscriptionExpiry = null;
+        updated.monthlyDocsLimit = 0;
         updated.isTrialActive = false;
       }
     }
-    
     return updated;
   },
 
@@ -167,9 +124,6 @@ export const userService = {
         return { allowed: true };
     }
     if (user.planId !== 'free') {
-        // Allow a grace period of 2 hours if expiry is just reached
-        const gracePeriod = 2 * 60 * 60 * 1000;
-        if (user.subscriptionExpiry && (Date.now() > user.subscriptionExpiry + gracePeriod)) return { allowed: false, reason: 'expired' };
         if (user.docsUsedThisMonth + fileCount > user.monthlyDocsLimit) return { allowed: false, reason: 'plan_limit' };
         return { allowed: true };
     }
@@ -178,13 +132,7 @@ export const userService = {
 
   recordUsage: async (user: UserProfile, fileCount: number): Promise<UserProfile> => {
     const newCount = (user.docsUsedThisMonth || 0) + fileCount;
-    const { data, error } = await supabase
-      .from('profiles')
-      .update({ docs_used_this_month: newCount })
-      .eq('id', user.id)
-      .select()
-      .single();
-
+    const { data, error } = await supabase.from('profiles').update({ docs_used_this_month: newCount }).eq('id', user.id).select().single();
     if (error) throw error;
     return mapProfile(data);
   }
