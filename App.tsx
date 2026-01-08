@@ -64,8 +64,8 @@ export default function App() {
   // Gemini API Key check - Non-blocking UI banner
   const isGeminiKeyMissing = !process.env.API_KEY;
 
-  // Handle URL cleanup and payment success detection
   useEffect(() => {
+    // Handle URL cleanup and payment success detection
     const params = new URLSearchParams(window.location.search);
     const payment = params.get('payment');
     
@@ -81,9 +81,25 @@ export default function App() {
         window.history.replaceState({}, document.title, window.location.pathname);
       }, 3000);
     }
-  }, []);
 
-  useEffect(() => {
+    // Initialize Auth Session
+    const initAuth = async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+            try {
+                const profile = await userService.upsertProfile(session.user);
+                setUser(profile);
+                const data = await db.getAll(session.user.id);
+                setExpenses(data);
+            } catch (err) {
+                console.error("Auth session error:", err);
+            }
+        }
+        setLoading(false);
+    };
+
+    initAuth();
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
         try {
@@ -91,34 +107,13 @@ export default function App() {
           setUser(profile);
           const data = await db.getAll(session.user.id);
           setExpenses(data);
-
-          if (paymentStatus === 'success' || (profile.monthlyDocsLimit === 0 && profile.planId === 'free')) {
-             setIsSyncing(true);
-             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-             pollIntervalRef.current = window.setInterval(async () => {
-                const refreshed = await userService.getProfile(session.user.id);
-                if (refreshed && (refreshed.planId !== 'free' || refreshed.monthlyDocsLimit > 0)) {
-                    setUser(refreshed);
-                    setIsSyncing(false);
-                    setPaymentStatus('success');
-                    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-                }
-             }, 2000);
-             setTimeout(() => {
-                 if (pollIntervalRef.current) {
-                     clearInterval(pollIntervalRef.current);
-                     setIsSyncing(false);
-                 }
-             }, 120000);
-          }
         } catch (err: any) {
-          console.error("Auth Init Error:", err);
+          console.error("Auth Change Error:", err);
         }
       } else {
         setUser(null);
         setExpenses([]);
       }
-      setLoading(false);
     });
 
     setBudgets(db.getBudgets());
@@ -126,7 +121,7 @@ export default function App() {
       subscription.unsubscribe();
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
-  }, [paymentStatus]);
+  }, []);
 
   const filteredExpenses = useMemo(() => {
     return expenses
