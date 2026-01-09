@@ -1,17 +1,18 @@
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { 
   BarChart, Bar, Tooltip, ResponsiveContainer, Cell, PieChart, Pie 
 } from 'recharts';
 import { 
-  Search, Download, Trash2, Plus, Edit2, AlertTriangle, 
+  Search, Download, Trash2, Plus, Edit2, AlertTriangle, Eye,
   PieChart as PieChartIcon, List, Settings, LogOut, Sparkles, Crown, CreditCard,
-  RefreshCw, CheckCircle2, X, Loader2, ShieldAlert
+  RefreshCw, CheckCircle2, X, Loader2, ShieldAlert, ImageIcon
 } from 'lucide-react';
 
 import { ExpenseItem, Stats, SortField, SortOrder, ExpenseCategory, BudgetMap, UserProfile } from './types';
 import { db } from './services/db';
-import { extractInvoiceData } from './services/geminiService';
+import { extractInvoiceData, fileToGenerativePart } from './services/geminiService';
 import { userService } from './services/userService';
 import { stripeService } from './services/stripeService';
 import { supabase } from './services/supabaseClient';
@@ -23,8 +24,9 @@ import AnalyticsView from './components/AnalyticsView';
 import BudgetModal from './components/BudgetModal';
 import LoginPage from './components/LoginPage';
 import PricingModal from './components/PricingModal';
+import ImageViewer from './components/ImageViewer';
 
-const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#64748b'];
+const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#a855f7', '#64748b'];
 
 type ViewType = 'expenses' | 'analytics';
 
@@ -58,14 +60,13 @@ export default function App() {
   const [isBudgetModalOpen, setIsBudgetModalOpen] = useState(false);
   const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ExpenseItem | undefined>(undefined);
+  const [viewingImage, setViewingImage] = useState<{url: string, title: string} | null>(null);
 
   const pollIntervalRef = useRef<number | null>(null);
 
-  // Gemini API Key check - Non-blocking UI banner
   const isGeminiKeyMissing = !process.env.API_KEY;
 
   useEffect(() => {
-    // Handle URL cleanup and payment success detection
     const params = new URLSearchParams(window.location.search);
     const payment = params.get('payment');
     
@@ -82,7 +83,6 @@ export default function App() {
       }, 3000);
     }
 
-    // Initialize Auth Session
     const initAuth = async () => {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
@@ -171,16 +171,16 @@ export default function App() {
       
       if (currentTotal + amount > limit) {
         setTimeout(() => {
-             alert(`⚠️ Warning: Spending on ${category} exceeds limit of RM ${limit}.`);
+             alert(`⚠️ Budget Alert: Spending on ${category} exceeds your RM ${limit} limit.`);
         }, 500);
       }
     }
   }
 
-  async function handleFilesSelect(files: File[]) {
+  async function handleFilesSelect(files: (File | Blob)[]) {
     if (!user) return;
     if (isGeminiKeyMissing) {
-        alert("AI Processing unavailable: GEMINI_API_KEY is missing. Please configure it in Netlify settings.");
+        alert("AI Processing unavailable: API Key missing.");
         return;
     }
     const status = userService.canUpload(user, files.length);
@@ -194,25 +194,32 @@ export default function App() {
     
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        setProgressStatus(`Processing ${i + 1} of ${files.length}: ${file.name}`);
+        const fileName = file instanceof File ? file.name : `captured-receipt-${Date.now()}.jpg`;
+        setProgressStatus(`Analyzing ${i + 1}/${files.length}...`);
+        
         try {
-            const data = await extractInvoiceData(file);
+            const [data, imageInfo] = await Promise.all([
+              extractInvoiceData(file),
+              fileToGenerativePart(file)
+            ]);
+
             const newExpense: ExpenseItem = {
                 id: crypto.randomUUID(),
                 vendorName: data.vendorName || 'Unknown Vendor',
                 date: formatDate(data.date),
                 amount: Number(data.amount) || 0,
-                currency: 'RM', 
+                currency: data.currency || 'RM', 
                 category: data.category as ExpenseCategory || ExpenseCategory.OTHERS,
                 summary: data.summary || '',
                 createdAt: Date.now(),
-                fileName: file.name,
+                fileName: fileName,
+                imageData: `data:${imageInfo.mimeType};base64,${imageInfo.data}`
             };
             await db.add(newExpense, user.id);
             checkBudgetWarning(newExpense.category, newExpense.amount);
             successCount++;
         } catch (error: any) {
-            console.error(`Failed to process ${file.name}`, error);
+            console.error(`Extraction failed:`, error);
         }
     }
 
@@ -266,34 +273,26 @@ export default function App() {
       } catch (err) {
         console.error("Delete failed:", err);
         setExpenses(oldExpenses);
-        alert("Could not delete item.");
       }
     }
   }
 
-  async function handleClearAll() {
-    if (user && window.confirm("Are you sure you want to delete ALL data?")) {
-      await db.clearAll(user.id);
-      setExpenses([]);
-    }
-  }
-
-  function handleExport() {
-    const ws = XLSX.utils.json_to_sheet(expenses.map(({id, createdAt, imageData, ...rest}) => rest));
+  async function handleExport() {
+    const dataToExport = expenses.map(({id, createdAt, imageData, ...rest}) => ({
+      ...rest,
+      date_created: new Date(createdAt).toLocaleString()
+    }));
+    const ws = XLSX.utils.json_to_sheet(dataToExport);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Expenses");
     XLSX.writeFile(wb, `InvoiceIntel_Export_${new Date().toISOString().split('T')[0]}.xlsx`);
-  }
-
-  function handleUserUpdate(updatedUser: UserProfile) {
-    setUser(updatedUser);
   }
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
        <div className="flex flex-col items-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
-          <p className="text-slate-500 text-sm font-medium animate-pulse tracking-wide">Initializing InvoiceIntel...</p>
+          <p className="text-slate-500 text-sm font-medium animate-pulse">Initializing InvoiceIntel...</p>
        </div>
     </div>
   );
@@ -304,22 +303,19 @@ export default function App() {
 
   const badgeInfo = () => {
       if (user.isTrialActive) return { text: `Trial: ${user.monthlyDocsLimit - user.docsUsedThisMonth} left`, color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
-      if (user.planId === 'free') return { text: 'Expired', color: 'bg-red-50 text-red-700 border-red-200' };
+      if (user.planId === 'free') return { text: 'Limit Reached', color: 'bg-red-50 text-red-700 border-red-200' };
       const remaining = user.monthlyDocsLimit - user.docsUsedThisMonth;
-      return { text: `${user.planId.toUpperCase()}: ${remaining} left`, color: remaining < 5 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200' };
+      return { text: `${user.planId.toUpperCase()}: ${remaining} left`, color: remaining < 10 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200' };
   };
   const badge = badgeInfo();
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
-      {/* Configuration Status Banner */}
       {isGeminiKeyMissing && (
         <div className="bg-amber-500 text-white animate-slideDown shadow-md relative z-50">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 flex items-center justify-between text-xs font-bold">
-                <div className="flex items-center gap-2">
-                    <ShieldAlert className="w-4 h-4" />
-                    <span>AI EXTRACTION OFFLINE: Gemini API Key missing in Netlify. Manual entry still works.</span>
-                </div>
+            <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-center text-xs font-bold gap-3">
+                <ShieldAlert className="w-4 h-4" />
+                <span>AI EXTRACTION OFFLINE: Gemini API Key missing. Manual entry enabled.</span>
                 <button onClick={() => window.location.reload()} className="underline flex items-center gap-1">
                     <RefreshCw className="w-3 h-3" /> Retry
                 </button>
@@ -331,152 +327,139 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-indigo-100 shadow-lg">
-                <span className="text-white font-bold text-xs">RM</span>
+              <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-indigo-200 shadow-xl">
+                <Sparkles className="text-white w-6 h-6" />
               </div>
-              <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-violet-600">InvoiceIntel</h1>
+              <h1 className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-violet-600 ml-2">InvoiceIntel</h1>
             </div>
             
-            <div className="hidden md:flex bg-slate-100 p-1 rounded-lg">
-                <button onClick={() => setView('expenses')} className={`flex items-center px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${view === 'expenses' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}><List className="w-4 h-4 mr-2" />Expenses</button>
-                <button onClick={() => setView('analytics')} className={`flex items-center px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${view === 'analytics' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}><PieChartIcon className="w-4 h-4 mr-2" />Analytics</button>
+            <div className="hidden md:flex bg-slate-100 p-1 rounded-xl">
+                <button onClick={() => setView('expenses')} className={`flex items-center px-5 py-2 text-sm font-bold rounded-lg transition-all ${view === 'expenses' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}><List className="w-4 h-4 mr-2" />List</button>
+                <button onClick={() => setView('analytics')} className={`flex items-center px-5 py-2 text-sm font-bold rounded-lg transition-all ${view === 'analytics' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}><PieChartIcon className="w-4 h-4 mr-2" />Insights</button>
             </div>
 
-            <div className="flex items-center gap-3">
-              <button onClick={() => setIsPricingModalOpen(true)} className={`flex items-center px-3 py-1.5 rounded-full text-xs font-bold border transition-all hover:scale-105 active:scale-95 ${badge.color}`}>
-                  {user.isTrialActive ? <Sparkles className="w-3 h-3 mr-1.5" /> : <Crown className="w-3 h-3 mr-1.5" />}
+            <div className="flex items-center gap-4">
+              <button onClick={() => setIsPricingModalOpen(true)} className={`flex items-center px-4 py-2 rounded-full text-xs font-black border transition-all hover:scale-105 active:scale-95 ${badge.color}`}>
                   {badge.text}
               </button>
               
-              <div className="flex items-center gap-2 border-l pl-3 ml-1">
+              <div className="flex items-center gap-2 border-l pl-4">
                   {user.stripeCustomerId && (
-                    <button 
-                      onClick={() => stripeService.redirectToCustomerPortal(user.stripeCustomerId!)}
-                      className="flex items-center justify-center text-slate-500 hover:text-indigo-600 p-2 rounded-xl hover:bg-indigo-50 transition-all group"
-                      title="Manage Subscription"
-                    >
-                      <CreditCard className="w-5 h-5 group-hover:scale-110" />
-                    </button>
+                    <button onClick={() => stripeService.redirectToCustomerPortal(user.stripeCustomerId!)} className="text-slate-500 hover:text-indigo-600 p-2 rounded-xl hover:bg-indigo-50 transition-all"><CreditCard className="w-5 h-5" /></button>
                   )}
-                  <button 
-                    onClick={() => userService.logout().then(() => setUser(null))} 
-                    className="flex items-center justify-center text-slate-400 hover:text-red-600 p-2 rounded-xl hover:bg-red-50 transition-all group" 
-                    title="Logout"
-                  >
-                    <LogOut className="w-5 h-5 group-hover:translate-x-0.5" />
-                  </button>
+                  <button onClick={() => userService.logout().then(() => setUser(null))} className="text-slate-400 hover:text-red-600 p-2 rounded-xl hover:bg-red-50 transition-all" title="Logout"><LogOut className="w-5 h-5" /></button>
               </div>
             </div>
           </div>
         </div>
       </header>
 
-      {isSyncing && (
-        <div className="bg-indigo-600 text-white animate-pulse">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-center gap-3 text-sm font-medium">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Syncing account status... Please wait.</span>
-            </div>
-        </div>
-      )}
-
-      {paymentStatus === 'success' && !isSyncing && (
-        <div className="bg-emerald-600 text-white animate-fadeIn">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
-                <div className="flex items-center gap-2 font-semibold">
-                    <CheckCircle2 className="w-5 h-5" />
-                    <span>Payment successful! Welcome to your new plan.</span>
-                </div>
-                <button onClick={() => setPaymentStatus(null)} className="text-white/80 hover:text-white p-1 rounded-full hover:bg-white/10"><X className="w-4 h-4" /></button>
-            </div>
-        </div>
-      )}
-
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         {view === 'expenses' ? (
         <>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-1">
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                    <h2 className="text-lg font-semibold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-indigo-500" />Add Invoices</h2>
-                    <FileUpload 
-                      onFilesSelect={handleFilesSelect} 
-                      isProcessing={isProcessing} 
-                      isDisabled={!userService.canUpload(user, 1).allowed} 
-                      disabledMessage={user.monthlyDocsLimit === 0 ? "Account Locked: Awaiting Sync" : undefined} 
-                    />
-                    {progressStatus && <div className="mt-4 p-3 bg-indigo-50 text-indigo-700 rounded-lg text-sm text-center font-medium border border-indigo-100 animate-pulse">{progressStatus}</div>}
-                    <div className="mt-4 pt-4 border-t text-center"><button onClick={() => setIsModalOpen(true)} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800 underline-offset-4 hover:underline">Or enter manually</button></div>
-                </div>
-            </div>
-            <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Expenses</p>
-                    <p className="text-3xl font-black text-slate-900 mt-1">RM {stats.totalAmount.toFixed(2)}</p>
-                    <div className="h-24 mt-4">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={stats.categoryBreakdown}><Bar dataKey="value" radius={[4, 4, 0, 0]}>{stats.categoryBreakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Bar></BarChart>
-                        </ResponsiveContainer>
-                    </div>
-                </div>
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Top Category</p>
-                    <p className="text-xl font-black text-slate-900 mt-1">{stats.categoryBreakdown[0]?.name || 'N/A'}</p>
-                    <div className="h-24 mt-4">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart><Pie data={stats.categoryBreakdown} dataKey="value" innerRadius={20} outerRadius={35} paddingAngle={2}>{stats.categoryBreakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Pie></PieChart>
-                        </ResponsiveContainer>
-                    </div>
-                </div>
-            </div>
+              <div className="lg:col-span-1">
+                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                      <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-slate-800"><Plus className="w-5 h-5 text-indigo-600" />Scan Receipt</h2>
+                      <FileUpload 
+                        onFilesSelect={handleFilesSelect} 
+                        isProcessing={isProcessing} 
+                        isDisabled={!userService.canUpload(user, 1).allowed} 
+                      />
+                      {progressStatus && <div className="mt-4 p-3 bg-indigo-50 text-indigo-700 rounded-xl text-xs text-center font-black animate-pulse border border-indigo-100">{progressStatus}</div>}
+                      <div className="mt-4 pt-4 border-t text-center"><button onClick={() => setIsModalOpen(true)} className="text-sm font-bold text-indigo-600 hover:text-indigo-800">Or type details manually</button></div>
+                  </div>
+              </div>
+              <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 p-4 opacity-5"><ImageIcon className="w-24 h-24" /></div>
+                      <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Total Expenses</p>
+                      <p className="text-4xl font-black text-slate-900 mt-2">RM {stats.totalAmount.toLocaleString(undefined, {minimumFractionDigits: 2})}</p>
+                      <div className="h-20 mt-6">
+                          <ResponsiveContainer width="100%" height="100%">
+                              <BarChart data={stats.categoryBreakdown.slice(0, 5)}><Bar dataKey="value" radius={[4, 4, 0, 0]}>{stats.categoryBreakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Bar></BarChart>
+                          </ResponsiveContainer>
+                      </div>
+                  </div>
+                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                      <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Top Category</p>
+                      <p className="text-2xl font-black text-indigo-600 mt-2">{stats.categoryBreakdown[0]?.name || 'No data'}</p>
+                      <p className="text-sm text-slate-500 font-medium">RM {stats.categoryBreakdown[0]?.value.toFixed(2) || '0.00'}</p>
+                  </div>
+              </div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="p-4 border-b flex flex-col sm:flex-row gap-4 justify-between items-center bg-slate-50/50">
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div className="p-5 border-b flex flex-col sm:flex-row gap-4 justify-between items-center bg-slate-50/30">
                     <div className="relative w-full sm:w-96">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <Search className="h-4 w-4 text-slate-400" />
-                        </div>
-                        <input type="text" className="w-full pl-10 pr-3 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" placeholder="Search by vendor or notes..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                        <input type="text" className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Search expenses..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                     </div>
                     <div className="flex gap-2 w-full sm:w-auto">
                          <Button variant="secondary" className="flex-1 sm:flex-none" onClick={() => setIsBudgetModalOpen(true)} icon={<Settings className="w-4 h-4"/>}>Budget</Button>
                          <Button variant="secondary" className="flex-1 sm:flex-none" onClick={handleExport} icon={<Download className="w-4 h-4"/>}>Export</Button>
-                         <Button variant="danger" className="flex-1 sm:flex-none" onClick={handleClearAll} icon={<Trash2 className="w-4 h-4"/>}>Clear</Button>
                     </div>
                 </div>
                 <div className="overflow-x-auto">
                     <table className="min-w-full divide-y divide-slate-200">
-                    <thead className="bg-slate-50">
+                    <thead className="bg-slate-50/50">
                         <tr>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Date</th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Vendor</th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-wider">Category</th>
-                        <th className="px-6 py-4 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Amount</th>
-                        <th className="px-6 py-4 text-right text-xs font-bold text-slate-500 uppercase tracking-wider">Actions</th>
+                        <th className="px-6 py-4 text-left text-[10px] font-black text-slate-500 uppercase tracking-widest">Receipt</th>
+                        <th className="px-6 py-4 text-left text-[10px] font-black text-slate-500 uppercase tracking-widest">Date / Vendor</th>
+                        <th className="px-6 py-4 text-left text-[10px] font-black text-slate-500 uppercase tracking-widest">Category</th>
+                        <th className="px-6 py-4 text-right text-[10px] font-black text-slate-500 uppercase tracking-widest">Amount</th>
+                        <th className="px-6 py-4 text-right text-[10px] font-black text-slate-500 uppercase tracking-widest">Actions</th>
                         </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-slate-100">
                         {filteredExpenses.length > 0 ? filteredExpenses.map((expense) => (
-                        <tr key={expense.id} className="hover:bg-slate-50/80 transition-colors group">
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 font-medium">{expense.date}</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-slate-900">{expense.vendorName}</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm"><span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-600 border border-indigo-100">{expense.category}</span></td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-mono font-black text-slate-900">
-                              RM {(Number(expense.amount) || 0).toFixed(2)}
+                        <tr key={expense.id} className="hover:bg-slate-50/50 transition-colors group">
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              {expense.imageData ? (
+                                <div 
+                                  onClick={() => setViewingImage({url: expense.imageData!, title: expense.vendorName})}
+                                  className="w-10 h-10 rounded-lg bg-slate-100 border border-slate-200 overflow-hidden cursor-pointer hover:ring-2 ring-indigo-500 transition-all flex items-center justify-center"
+                                >
+                                  {expense.imageData.startsWith('data:application/pdf') ? (
+                                    <List className="w-5 h-5 text-slate-400" />
+                                  ) : (
+                                    <img src={expense.imageData} className="w-full h-full object-cover" />
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="w-10 h-10 rounded-lg bg-slate-50 border border-dashed border-slate-200 flex items-center justify-center">
+                                  <ImageIcon className="w-4 h-4 text-slate-300" />
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <p className="text-xs font-medium text-slate-500">{expense.date}</p>
+                              <p className="text-sm font-bold text-slate-900">{expense.vendorName}</p>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <span className="px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-600 border border-indigo-100">
+                                {expense.category}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-black text-slate-900">
+                              <span className="text-[10px] text-slate-400 mr-1">{expense.currency}</span>
+                              {(Number(expense.amount) || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
                             </td>
                             <td className="px-6 py-4 text-right text-sm font-medium">
-                                <button onClick={() => { setEditingItem(expense); setIsModalOpen(true); }} className="text-slate-400 hover:text-indigo-600 p-2 transition-all rounded-lg hover:bg-indigo-50" title="Edit"><Edit2 className="w-4 h-4" /></button>
-                                <button onClick={() => handleDelete(expense.id)} className="text-slate-400 hover:text-red-600 p-2 transition-all rounded-lg hover:bg-red-50 ml-1" title="Delete"><Trash2 className="w-4 h-4" /></button>
+                                <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {expense.imageData && (
+                                      <button onClick={() => setViewingImage({url: expense.imageData!, title: expense.vendorName})} className="text-slate-400 hover:text-indigo-600 p-2 rounded-lg hover:bg-indigo-50"><Eye className="w-4 h-4" /></button>
+                                    )}
+                                    <button onClick={() => { setEditingItem(expense); setIsModalOpen(true); }} className="text-slate-400 hover:text-indigo-600 p-2 rounded-lg hover:bg-indigo-50"><Edit2 className="w-4 h-4" /></button>
+                                    <button onClick={() => handleDelete(expense.id)} className="text-slate-400 hover:text-red-600 p-2 rounded-lg hover:bg-red-50"><Trash2 className="w-4 h-4" /></button>
+                                </div>
                             </td>
                         </tr>
                         )) : (
                           <tr>
-                            <td colSpan={5} className="px-6 py-12 text-center">
-                              <div className="flex flex-col items-center text-slate-400">
-                                <Search className="w-8 h-8 mb-2 opacity-20" />
-                                <p className="text-sm font-medium">No transactions found.</p>
-                              </div>
+                            <td colSpan={5} className="px-6 py-12 text-center text-slate-400">
+                              <Sparkles className="w-8 h-8 mb-2 mx-auto opacity-20" />
+                              <p className="text-sm font-bold">Start tracking your food and bills today.</p>
                             </td>
                           </tr>
                         )}
@@ -492,7 +475,13 @@ export default function App() {
 
       <ExpenseModal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); setEditingItem(undefined); }} onSave={handleSaveExpense} initialData={editingItem} />
       <BudgetModal isOpen={isBudgetModalOpen} onClose={() => setIsBudgetModalOpen(false)} budgets={budgets} onSave={handleSaveBudgets} />
-      <PricingModal isOpen={isPricingModalOpen} onClose={() => setIsPricingModalOpen(false)} user={user} onSuccess={handleUserUpdate} />
+      <PricingModal isOpen={isPricingModalOpen} onClose={() => setIsPricingModalOpen(false)} user={user} onSuccess={setUser} />
+      <ImageViewer 
+        isOpen={!!viewingImage} 
+        onClose={() => setViewingImage(null)} 
+        imageUrl={viewingImage?.url} 
+        title={viewingImage?.title || ''} 
+      />
     </div>
   );
 }

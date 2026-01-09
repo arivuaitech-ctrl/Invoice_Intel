@@ -2,13 +2,13 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ExpenseCategory } from "../types";
 
-export const fileToGenerativePart = async (file: File): Promise<{ mimeType: string; data: string }> => {
+export const fileToGenerativePart = async (file: File | Blob): Promise<{ mimeType: string; data: string }> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
       const base64String = (reader.result as string).split(',')[1];
       let mimeType = file.type;
-      if (!mimeType) {
+      if (!mimeType && file instanceof File) {
         const ext = file.name.split('.').pop()?.toLowerCase();
         if (ext === 'pdf') mimeType = 'application/pdf';
         else if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
@@ -16,7 +16,7 @@ export const fileToGenerativePart = async (file: File): Promise<{ mimeType: stri
         else if (ext === 'webp') mimeType = 'image/webp';
         else mimeType = 'image/jpeg';
       }
-      resolve({ mimeType, data: base64String });
+      resolve({ mimeType: mimeType || 'image/jpeg', data: base64String });
     };
     reader.onerror = reject;
     reader.readAsDataURL(file);
@@ -29,25 +29,22 @@ const expenseSchema = {
   properties: {
     vendorName: { type: Type.STRING, description: "Name of the merchant or vendor" },
     date: { type: Type.STRING, description: "Date of transaction in YYYY-MM-DD format" },
-    amount: { type: Type.NUMBER, description: "Total amount paid" },
-    currency: { type: Type.STRING, description: "Currency code (e.g., RM)" },
+    amount: { type: Type.NUMBER, description: "Total amount paid (numeric)" },
+    currency: { type: Type.STRING, description: "Currency code (e.g., MYR, USD, RM)" },
     category: { 
       type: Type.STRING, 
       enum: Object.values(ExpenseCategory),
-      description: "Best fitting category"
+      description: "Select the most appropriate category"
     },
-    summary: { type: Type.STRING, description: "Brief description of purchase" }
+    summary: { type: Type.STRING, description: "Brief description of the purchase" }
   },
   required: ["vendorName", "date", "amount", "category"]
 };
 
-export const extractInvoiceData = async (file: File) => {
+export const extractInvoiceData = async (file: File | Blob) => {
   try {
-    // Guidelines: Always use direct access to process.env.API_KEY when initializing.
-    // Guidelines: Create a new GoogleGenAI instance right before making an API call.
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const filePart = await fileToGenerativePart(file);
-    // Guidelines: Use gemini-3-pro-preview for complex reasoning tasks like invoice extraction.
     const modelId = 'gemini-3-pro-preview';
 
     const result = await ai.models.generateContent({
@@ -55,7 +52,7 @@ export const extractInvoiceData = async (file: File) => {
       contents: {
         parts: [
           { inlineData: filePart },
-          { text: "Extract invoice details as JSON. Ensure the date is in YYYY-MM-DD format." }
+          { text: "Analyze the attached receipt or invoice. Extract the merchant name, date, total amount, currency, and categorize it based on the provided schema. If the date is not clear, use today's date." }
         ]
       },
       config: {
@@ -65,7 +62,6 @@ export const extractInvoiceData = async (file: File) => {
       }
     });
 
-    // Guidelines: Use .text property (not a method)
     const textOutput = result.text;
     if (!textOutput) throw new Error("No data returned from Gemini");
     

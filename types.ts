@@ -1,9 +1,14 @@
 
 export enum ExpenseCategory {
-  FOOD = 'Food',
-  UTILITY = 'Utility',
+  FOOD = 'Dining',
+  GROCERIES = 'Groceries',
+  UTILITY = 'Utilities',
   TRANSPORT = 'Transport',
-  HOTEL = 'Hotel',
+  HOTEL = 'Travel',
+  SUBSCRIPTION = 'Subscriptions',
+  HEALTHCARE = 'Healthcare',
+  ENTERTAINMENT = 'Entertainment',
+  SHOPPING = 'Shopping',
   OTHERS = 'Others'
 }
 

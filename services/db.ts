@@ -114,11 +114,18 @@ export const db = {
   getBudgets: (): BudgetMap => {
     const data = localStorage.getItem('invoice_intel_budgets_v1');
     if (data) return JSON.parse(data);
+    
+    // Fix: Correctly initialize all required categories for the BudgetMap type (Record<ExpenseCategory, number>)
     return {
       [ExpenseCategory.FOOD]: 0,
+      [ExpenseCategory.GROCERIES]: 0,
       [ExpenseCategory.UTILITY]: 0,
       [ExpenseCategory.TRANSPORT]: 0,
       [ExpenseCategory.HOTEL]: 0,
+      [ExpenseCategory.SUBSCRIPTION]: 0,
+      [ExpenseCategory.HEALTHCARE]: 0,
+      [ExpenseCategory.ENTERTAINMENT]: 0,
+      [ExpenseCategory.SHOPPING]: 0,
       [ExpenseCategory.OTHERS]: 0,
     };
   },
